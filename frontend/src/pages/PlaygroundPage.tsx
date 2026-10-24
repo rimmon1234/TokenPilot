@@ -118,7 +118,27 @@ export const PlaygroundPage: React.FC = () => {
       return;
     }
 
+    // Step 2 & 3: Validate workspace model configuration before dispatching inference
+    if (!selectedModel.provider_model_id || !selectedModel.provider_model_id.trim()) {
+      setErrorMessage('Configuration error: provider_model_id is missing. Open Model Studio and configure the selected model.');
+      return;
+    }
+
+    const needsBaseUrl = [
+      'local_openai_compatible',
+      'remote_openai_compatible',
+      'huggingface_inference_endpoint',
+    ].includes(selectedModel.execution_mode);
+
+    if (needsBaseUrl && (!selectedModel.base_url || !selectedModel.base_url.trim())) {
+      setErrorMessage('Configuration error: base_url is required for this execution mode. Open Model Studio and configure the selected model.');
+      return;
+    }
+
     setErrorMessage(null);
+
+    // Filter out previous empty assistant/system messages from history to ensure contract validity
+    const validHistory = messages.filter((m) => m.content && m.content.trim().length > 0);
     const userMessage: ChatMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
@@ -126,7 +146,7 @@ export const PlaygroundPage: React.FC = () => {
       timestamp: new Date().toLocaleTimeString(),
     };
 
-    const newMessages = [...messages, userMessage];
+    const newMessages = [...validHistory, userMessage];
     setMessages(newMessages);
     setPrompt('');
     setIsGenerating(true);
@@ -150,10 +170,10 @@ export const PlaygroundPage: React.FC = () => {
       provider_type: selectedModel.provider_type,
       execution_mode: selectedModel.execution_mode,
       execution_location: selectedModel.execution_location,
-      provider_model_id: selectedModel.provider_model_id,
-      base_url: selectedModel.base_url,
-      huggingface_repo_id: selectedModel.huggingface_repo_id,
-      messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
+      provider_model_id: selectedModel.provider_model_id.trim(),
+      base_url: selectedModel.base_url?.trim() || undefined,
+      huggingface_repo_id: selectedModel.huggingface_repo_id?.trim() || undefined,
+      messages: newMessages.map((m) => ({ role: m.role, content: m.content.trim() })),
       temperature,
       max_tokens: maxTokens,
       stream: true,
@@ -359,6 +379,16 @@ export const PlaygroundPage: React.FC = () => {
                 <div className="flex-1">
                   <div className="font-semibold">Inference Notice</div>
                   <div className="mt-0.5 text-rose-200/90">{errorMessage}</div>
+                  {errorMessage.includes('Model Studio') && (
+                    <div className="mt-2">
+                      <Link
+                        to="/studio"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-brand-400 hover:text-brand-300 underline"
+                      >
+                        Open Model Studio <ArrowRight className="w-3 h-3" />
+                      </Link>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

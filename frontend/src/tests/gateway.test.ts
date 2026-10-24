@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { streamChatCompletion } from '../services/api';
+import { streamChatCompletion, formatGatewayErrorMessage } from '../services/api';
 import { GatewayChatRequest, StreamMetaEvent, StreamDoneEvent, StreamUsageEvent } from '../types';
 
 describe('Frontend Gateway Streaming Service', () => {
@@ -122,6 +122,34 @@ describe('Frontend Gateway Streaming Service', () => {
     expect(reportedCode).toBe('http_422');
   });
 
+  it('formats 422 validation errors with friendly guidance instead of raw schema errors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        detail: [
+          {
+            type: 'string_too_short',
+            loc: ['body', 'provider_model_id'],
+            msg: 'String should have at least 1 character',
+            input: '',
+          },
+        ],
+      }),
+    }));
+
+    let reportedError = '';
+    await expect(
+      streamChatCompletion(baseRequest, {
+        onError: (err) => {
+          reportedError = err;
+        },
+      })
+    ).rejects.toThrow('Configuration error: provider_model_id is missing. Open Model Studio and configure the selected model.');
+
+    expect(reportedError).toBe('Configuration error: provider_model_id is missing. Open Model Studio and configure the selected model.');
+  });
+
   it('handles in-stream error events emitted by the gateway', async () => {
     const ssePayload = 'data: {"type":"error","error":"Upstream rate limit reached","code":"http_429"}\n\n';
     const encoder = new TextEncoder();
@@ -183,5 +211,76 @@ describe('Frontend Gateway Streaming Service', () => {
 
     await promise;
     expect(receivedText).toBe('Part 1');
+  });
+});
+
+describe('Gateway Error Message Formatting', () => {
+  it('translates missing provider_model_id to actionable instructions', () => {
+    const result = formatGatewayErrorMessage({
+      detail: [
+        {
+          type: 'string_too_short',
+          loc: ['body', 'provider_model_id'],
+          msg: 'String should have at least 1 character',
+        },
+      ],
+    }, 422);
+
+    expect(result).toBe('Configuration error: provider_model_id is missing. Open Model Studio and configure the selected model.');
+  });
+
+  it('translates missing base_url to actionable instructions', () => {
+    const result = formatGatewayErrorMessage({
+      detail: [
+        {
+          type: 'value_error',
+          loc: ['body', 'base_url'],
+          msg: 'base_url is required for this execution mode',
+        },
+      ],
+    }, 422);
+
+    expect(result).toBe('Configuration error: base_url is required for this execution mode. Open Model Studio and configure the selected model.');
+  });
+
+  it('translates empty message content correctly', () => {
+    const result = formatGatewayErrorMessage({
+      detail: [
+        {
+          type: 'string_too_short',
+          loc: ['body', 'messages', 0, 'content'],
+          msg: 'String should have at least 1 character',
+        },
+      ],
+    }, 422);
+
+    expect(result).toBe('Configuration error: message content cannot be empty.');
+  });
+
+  it('translates empty messages list correctly', () => {
+    const result = formatGatewayErrorMessage({
+      detail: [
+        {
+          type: 'too_short',
+          loc: ['body', 'messages'],
+          msg: 'List should have at least 1 item after validation',
+        },
+      ],
+    }, 422);
+
+    expect(result).toBe('Configuration error: at least one message is required.');
+  });
+
+  it('preserves plain string error details', () => {
+    const result = formatGatewayErrorMessage({
+      detail: 'Custom gateway failure message',
+    }, 400);
+
+    expect(result).toBe('Custom gateway failure message');
+  });
+
+  it('falls back safely when response body is null or empty', () => {
+    const result = formatGatewayErrorMessage(null, 500);
+    expect(result).toBe('Gateway returned HTTP 500');
   });
 });

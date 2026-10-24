@@ -127,20 +127,23 @@ async def search_hf_models(
                 error=None,
             )
 
-    # Prepare HTTP headers
-    headers = {"User-Agent": "TokenPilot-Gateway/0.1.0"}
+    # Prepare HTTP headers with UTF-8 support
+    header_dict = {"User-Agent": "TokenPilot-Gateway/0.1.0"}
     if settings.hf_token:
-        headers["Authorization"] = f"Bearer {settings.hf_token}"
+        header_dict["Authorization"] = f"Bearer {settings.hf_token}"
+    headers = httpx.Headers(header_dict, encoding="utf-8")
 
-    params = {
+    query_params_dict = {
         "limit": min(limit, 50),
         "full": "true",
         "config": "true",
     }
     if query.strip():
-        params["search"] = query.strip()
+        query_params_dict["search"] = query.strip()
     if task:
-        params["filter"] = task
+        query_params_dict["filter"] = task
+
+    params = httpx.QueryParams(query_params_dict)
 
     try:
         async with httpx.AsyncClient(timeout=settings.hf_api_timeout_seconds) as client:
@@ -166,7 +169,18 @@ async def search_hf_models(
                     error=f"Hugging Face API returned error status {response.status_code}. Please retry.",
                 )
 
-            data = response.json()
+            try:
+                data = response.json()
+            except Exception as json_err:
+                logger.warning("Failed to decode JSON from Hugging Face Hub: %s", type(json_err).__name__)
+                return HFSearchResponse(
+                    query=query,
+                    total_found=0,
+                    models=[],
+                    cached=False,
+                    error="Received malformed JSON response from Hugging Face Hub.",
+                )
+
             if not isinstance(data, list):
                 return HFSearchResponse(
                     query=query,
@@ -178,12 +192,16 @@ async def search_hf_models(
 
             discovered_models: List[HuggingFaceDiscoveredModel] = []
             for item in data:
+                if not isinstance(item, dict):
+                    continue
                 repo_id = item.get("id") or item.get("modelId")
-                if not repo_id:
+                if not repo_id or not isinstance(repo_id, str):
                     continue
 
-                tags = item.get("tags") or []
-                card_data = item.get("cardData") or {}
+                raw_tags = item.get("tags")
+                tags = raw_tags if isinstance(raw_tags, list) else []
+                raw_card_data = item.get("cardData")
+                card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
                 license_val, is_lic_verified = _parse_license(tags, card_data)
                 gated_val = _parse_gated(item.get("gated"))
                 is_chat = _parse_chat_support(item.get("pipeline_tag"), tags)
@@ -250,6 +268,15 @@ async def search_hf_models(
             models=[],
             cached=False,
             error="Connection to Hugging Face Hub timed out. Check internet connection and click retry.",
+        )
+    except (UnicodeEncodeError, UnicodeDecodeError, UnicodeError) as exc:
+        logger.warning("Encoding error querying Hugging Face API: %s", type(exc).__name__)
+        return HFSearchResponse(
+            query=query,
+            total_found=0,
+            models=[],
+            cached=False,
+            error=f"Character encoding error in search query: {type(exc).__name__}. Please check query text.",
         )
     except Exception as exc:
         logger.error(f"Error querying Hugging Face API: {exc}", exc_info=True)

@@ -2,7 +2,7 @@
 import logging
 import time
 from typing import Dict, Any, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 import httpx
 
 from app.config import settings
@@ -127,11 +127,12 @@ async def _test_openai_compatible(
     else:
         probe_url = f"{base_clean}/v1/models"
 
-    headers = {"User-Agent": "TokenPilot-Diagnostics/0.1.0"}
+    headers_dict = {"User-Agent": "TokenPilot-Diagnostics/0.1.0"}
     has_token = False
     if request.transient_credential and request.transient_credential.get_secret_value():
-        headers["Authorization"] = f"Bearer {request.transient_credential.get_secret_value()}"
+        headers_dict["Authorization"] = f"Bearer {request.transient_credential.get_secret_value()}"
         has_token = True
+    headers = httpx.Headers(headers_dict, encoding="utf-8")
 
     try:
         async with httpx.AsyncClient(
@@ -289,6 +290,21 @@ async def _test_openai_compatible(
             retryable=True,
         )
 
+    except (UnicodeEncodeError, UnicodeDecodeError, UnicodeError) as exc:
+        latency = round((time.perf_counter() - start_time) * 1000, 2)
+        safe_url = sanitize_url_for_display(raw_base_url)
+        return ConnectionTestResult(
+            status=ConnectionTestStatus.CONFIGURATION_ERROR,
+            provider_type=request.provider_type,
+            sanitized_model_id=sanitized_id,
+            endpoint_reachable=None,
+            auth_status="untested",
+            inference_verified=False,
+            latency_ms=latency,
+            diagnostic_message=f"Character encoding error in endpoint configuration: {type(exc).__name__}",
+            retryable=False,
+        )
+
     except Exception as exc:
         latency = round((time.perf_counter() - start_time) * 1000, 2)
         logger.warning(f"Unexpected connection test error: {type(exc).__name__}")
@@ -333,15 +349,17 @@ async def _test_hf_inference_provider(
     elif settings.hf_token:
         token = settings.hf_token
 
-    headers = {"User-Agent": "TokenPilot-Diagnostics/0.1.0"}
+    headers_dict = {"User-Agent": "TokenPilot-Diagnostics/0.1.0"}
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        headers_dict["Authorization"] = f"Bearer {token}"
+    headers = httpx.Headers(headers_dict, encoding="utf-8")
+
+    auth_valid = False
+    user_name = None
 
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             # 1. If token is provided, validate credential via whoami
-            auth_valid = False
-            user_name = None
             if token:
                 auth_resp = await client.get("https://huggingface.co/api/whoami-v2", headers=headers)
                 latency_auth = round((time.perf_counter() - start_time) * 1000, 2)
@@ -378,7 +396,8 @@ async def _test_hf_inference_provider(
                     )
 
             # 2. Check repository metadata and provider availability on Hub
-            repo_url = f"https://huggingface.co/api/models/{repo_id}"
+            safe_repo_id = quote(repo_id, safe="/@")
+            repo_url = f"https://huggingface.co/api/models/{safe_repo_id}"
             model_resp = await client.get(repo_url, headers=headers)
             latency = round((time.perf_counter() - start_time) * 1000, 2)
 
@@ -388,7 +407,7 @@ async def _test_hf_inference_provider(
                     provider_type=request.provider_type,
                     sanitized_model_id=sanitized_id,
                     endpoint_reachable=True,
-                    auth_status="valid" if auth_valid else ("missing" if not token else "untested"),
+                    auth_status="valid" if auth_valid else "untested",
                     inference_verified=False,
                     latency_ms=latency,
                     diagnostic_message=f"Model repository '{repo_id}' was not found on the Hugging Face Hub.",
@@ -397,11 +416,11 @@ async def _test_hf_inference_provider(
 
             if model_resp.status_code in (401, 403):
                 return ConnectionTestResult(
-                    status=ConnectionTestStatus.AUTHENTICATION_FAILED,
+                    status=ConnectionTestStatus.AUTHENTICATION_FAILED if token else ConnectionTestStatus.INCONCLUSIVE,
                     provider_type=request.provider_type,
                     sanitized_model_id=sanitized_id,
                     endpoint_reachable=True,
-                    auth_status="invalid" if token else "missing",
+                    auth_status="invalid" if (token and not auth_valid) else ("valid" if auth_valid else "untested"),
                     inference_verified=False,
                     latency_ms=latency,
                     diagnostic_message=f"Model repository '{repo_id}' is gated or private. A Hugging Face token with granted repository permissions is required.",
@@ -415,7 +434,8 @@ async def _test_hf_inference_provider(
                 is_serverless = inf_status in ("warm", "cold", True)
 
                 # Collect provider hints
-                tags = data.get("tags") or []
+                raw_tags = data.get("tags")
+                tags = raw_tags if isinstance(raw_tags, list) else []
                 supported_providers = [
                     t.split("provider:", 1)[1] for t in tags if isinstance(t, str) and t.startswith("provider:")
                 ]
@@ -426,7 +446,7 @@ async def _test_hf_inference_provider(
                         provider_type=request.provider_type,
                         sanitized_model_id=sanitized_id,
                         endpoint_reachable=True,
-                        auth_status="missing",
+                        auth_status="untested",
                         inference_verified=False,
                         latency_ms=latency,
                         diagnostic_message=(
@@ -465,39 +485,57 @@ async def _test_hf_inference_provider(
                 )
 
             return ConnectionTestResult(
-                status=ConnectionTestStatus.UNREACHABLE,
+                status=ConnectionTestStatus.INCONCLUSIVE,
                 provider_type=request.provider_type,
                 sanitized_model_id=sanitized_id,
                 endpoint_reachable=True,
                 auth_status="valid" if auth_valid else "untested",
                 inference_verified=False,
                 latency_ms=latency,
-                diagnostic_message=f"Hugging Face Hub API returned unexpected status {model_resp.status_code}.",
+                diagnostic_message=f"Hugging Face Hub API returned unexpected status {model_resp.status_code}. Hub search failed, but inference endpoints remain reachable.",
                 retryable=True,
             )
 
     except httpx.TimeoutException:
         latency = round((time.perf_counter() - start_time) * 1000, 2)
         return ConnectionTestResult(
-            status=ConnectionTestStatus.UNREACHABLE,
+            status=ConnectionTestStatus.INCONCLUSIVE if auth_valid else ConnectionTestStatus.UNREACHABLE,
             provider_type=request.provider_type,
             sanitized_model_id=sanitized_id,
-            endpoint_reachable=False,
-            auth_status="untested",
+            endpoint_reachable=True if auth_valid else False,
+            auth_status="valid" if auth_valid else "untested",
             inference_verified=False,
             latency_ms=latency,
-            diagnostic_message="Connection timed out while contacting Hugging Face Hub.",
+            diagnostic_message=(
+                "Hugging Face model metadata query timed out. Inference endpoint reachability could not be confirmed."
+                if auth_valid else
+                "Connection timed out while contacting Hugging Face Hub."
+            ),
             retryable=True,
+        )
+
+    except (UnicodeEncodeError, UnicodeDecodeError, UnicodeError) as exc:
+        latency = round((time.perf_counter() - start_time) * 1000, 2)
+        return ConnectionTestResult(
+            status=ConnectionTestStatus.CONFIGURATION_ERROR,
+            provider_type=request.provider_type,
+            sanitized_model_id=sanitized_id,
+            endpoint_reachable=True if auth_valid else None,
+            auth_status="valid" if auth_valid else "untested",
+            inference_verified=False,
+            latency_ms=latency,
+            diagnostic_message=f"Configuration encoding error: {type(exc).__name__}",
+            retryable=False,
         )
 
     except Exception as exc:
         latency = round((time.perf_counter() - start_time) * 1000, 2)
         return ConnectionTestResult(
-            status=ConnectionTestStatus.UNREACHABLE,
+            status=ConnectionTestStatus.INCONCLUSIVE if auth_valid else ConnectionTestStatus.UNREACHABLE,
             provider_type=request.provider_type,
             sanitized_model_id=sanitized_id,
-            endpoint_reachable=False,
-            auth_status="untested",
+            endpoint_reachable=True if auth_valid else False,
+            auth_status="valid" if auth_valid else "untested",
             inference_verified=False,
             latency_ms=latency,
             diagnostic_message=f"Hugging Face Hub query failed: {type(exc).__name__}",
@@ -573,9 +611,10 @@ async def _test_hf_inference_endpoint(
     elif settings.hf_token:
         token = settings.hf_token
 
-    headers = {"User-Agent": "TokenPilot-Diagnostics/0.1.0"}
+    headers_dict = {"User-Agent": "TokenPilot-Diagnostics/0.1.0"}
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        headers_dict["Authorization"] = f"Bearer {token}"
+    headers = httpx.Headers(headers_dict, encoding="utf-8")
 
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS, follow_redirects=False) as client:
@@ -653,6 +692,21 @@ async def _test_hf_inference_endpoint(
             latency_ms=latency,
             diagnostic_message=f"Connection timed out reaching {safe_url}.",
             retryable=True,
+        )
+
+    except (UnicodeEncodeError, UnicodeDecodeError, UnicodeError) as exc:
+        latency = round((time.perf_counter() - start_time) * 1000, 2)
+        safe_url = sanitize_url_for_display(raw_url)
+        return ConnectionTestResult(
+            status=ConnectionTestStatus.CONFIGURATION_ERROR,
+            provider_type=request.provider_type,
+            sanitized_model_id=sanitized_id,
+            endpoint_reachable=None,
+            auth_status="untested",
+            inference_verified=False,
+            latency_ms=latency,
+            diagnostic_message=f"Character encoding error in endpoint configuration: {type(exc).__name__}",
+            retryable=False,
         )
 
     except Exception as exc:

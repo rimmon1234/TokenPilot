@@ -228,7 +228,7 @@ async def test_hf_provider_missing_token_inconclusive():
     with patch("httpx.AsyncClient.get", return_value=mock_model_resp):
         res = await run_connection_test(req)
         assert res.status == ConnectionTestStatus.INCONCLUSIVE
-        assert res.auth_status == "missing"
+        assert res.auth_status == "untested"
         assert res.endpoint_reachable is True
         assert res.inference_verified is False
         assert "no user token was provided" in res.diagnostic_message
@@ -254,6 +254,139 @@ async def test_hf_provider_invalid_token():
         assert res.status == ConnectionTestStatus.AUTHENTICATION_FAILED
         assert res.auth_status == "invalid"
         assert "hf_invalid_token" not in res.diagnostic_message
+
+
+@pytest.mark.asyncio
+async def test_hf_provider_original_unicode_failure_scenario():
+    """
+    Original failure scenario: transient credential containing non-ASCII character (em-dash \u2014).
+    Verify that it no longer throws UnicodeEncodeError, reaches endpoint, and returns AUTHENTICATION_FAILED.
+    """
+    mock_whoami = httpx.Response(
+        401,
+        request=httpx.Request("GET", "https://huggingface.co/api/whoami-v2"),
+    )
+
+    req = ConnectionTestRequest(
+        provider_type="huggingface",
+        execution_mode=ExecutionMode.HUGGINGFACE_INFERENCE_PROVIDERS,
+        provider_model_id="meta-llama/Llama-3.1-8B-Instruct",
+        huggingface_repo_id="meta-llama/Llama-3.1-8B-Instruct",
+        transient_credential=SecretStr("hf_\u2014bad_token"),
+    )
+
+    with patch("httpx.AsyncClient.get", return_value=mock_whoami) as mock_get:
+        res = await run_connection_test(req)
+        # Must NOT fail with UnicodeEncodeError or mark endpoint unreachable
+        assert res.status == ConnectionTestStatus.AUTHENTICATION_FAILED
+        assert res.endpoint_reachable is True
+        assert res.auth_status == "invalid"
+        assert "UnicodeEncodeError" not in res.diagnostic_message
+        assert "token validation failed" in res.diagnostic_message.lower()
+        # Verify that Authorization header was encoded without exception
+        headers = mock_get.call_args[1]["headers"]
+        assert isinstance(headers, httpx.Headers)
+
+
+@pytest.mark.asyncio
+async def test_hf_provider_hub_search_failure_preserves_endpoint_reachability():
+    """
+    Verify that Hugging Face Hub search / metadata query failures do not incorrectly
+    imply that the inference endpoint is unreachable when auth succeeded.
+    """
+    mock_whoami = httpx.Response(
+        200,
+        json={"name": "testuser"},
+        request=httpx.Request("GET", "https://huggingface.co/api/whoami-v2"),
+    )
+
+    async def route_mock(url, **kwargs):
+        if "whoami" in url:
+            return mock_whoami
+        # Model metadata lookup on Hub times out
+        raise httpx.TimeoutException("Hub metadata timeout")
+
+    req = ConnectionTestRequest(
+        provider_type="huggingface",
+        execution_mode=ExecutionMode.HUGGINGFACE_INFERENCE_PROVIDERS,
+        provider_model_id="meta-llama/Llama-3.1-8B-Instruct",
+        transient_credential=SecretStr("hf_valid_token"),
+    )
+
+    with patch("httpx.AsyncClient.get", side_effect=route_mock):
+        res = await run_connection_test(req)
+        # Hub search timeout must NOT mark the endpoint unreachable
+        assert res.status == ConnectionTestStatus.INCONCLUSIVE
+        assert res.endpoint_reachable is True
+        assert res.auth_status == "valid"
+        assert "timed out" in res.diagnostic_message.lower()
+
+
+@pytest.mark.asyncio
+async def test_hf_provider_hub_unexpected_status_preserves_endpoint_reachability():
+    """Verify that HTTP 500 from Hugging Face Hub metadata API reports inconclusive, not unreachable."""
+    mock_whoami = httpx.Response(
+        200,
+        json={"name": "testuser"},
+        request=httpx.Request("GET", "https://huggingface.co/api/whoami-v2"),
+    )
+    mock_hub_error = httpx.Response(
+        500,
+        request=httpx.Request("GET", "https://huggingface.co/api/models/test-model"),
+    )
+
+    async def route_mock(url, **kwargs):
+        if "whoami" in url:
+            return mock_whoami
+        return mock_hub_error
+
+    req = ConnectionTestRequest(
+        provider_type="huggingface",
+        execution_mode=ExecutionMode.HUGGINGFACE_INFERENCE_PROVIDERS,
+        provider_model_id="test-model",
+        transient_credential=SecretStr("hf_valid_token"),
+    )
+
+    with patch("httpx.AsyncClient.get", side_effect=route_mock):
+        res = await run_connection_test(req)
+        assert res.status == ConnectionTestStatus.INCONCLUSIVE
+        assert res.endpoint_reachable is True
+        assert res.auth_status == "valid"
+        assert "unexpected status 500" in res.diagnostic_message
+
+
+@pytest.mark.asyncio
+async def test_hf_provider_non_ascii_repo_id_url_quoting():
+    """Verify model repo ID with unicode characters is URL percent-quoted safely."""
+    mock_whoami = httpx.Response(
+        200,
+        json={"name": "testuser"},
+        request=httpx.Request("GET", "https://huggingface.co/api/whoami-v2"),
+    )
+    mock_model = httpx.Response(
+        200,
+        json={"id": "author/モデル—7b", "inference": "warm"},
+        request=httpx.Request("GET", "https://huggingface.co/api/models/author/%E3%83%A2%E3%83%87%E3%83%AB%E2%80%947b"),
+    )
+
+    async def route_mock(url, **kwargs):
+        if "whoami" in url:
+            return mock_whoami
+        assert "%E3%83%A2%E3%83%87%E3%83%AB%E2%80%947b" in url
+        return mock_model
+
+    req = ConnectionTestRequest(
+        provider_type="huggingface",
+        execution_mode=ExecutionMode.HUGGINGFACE_INFERENCE_PROVIDERS,
+        provider_model_id="author/モデル—7b",
+        transient_credential=SecretStr("hf_valid_token"),
+    )
+
+    with patch("httpx.AsyncClient.get", side_effect=route_mock):
+        res = await run_connection_test(req)
+        assert res.status == ConnectionTestStatus.CONNECTED
+        assert res.endpoint_reachable is True
+        assert res.auth_status == "valid"
 
 
 @pytest.mark.asyncio

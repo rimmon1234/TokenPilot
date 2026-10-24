@@ -76,12 +76,13 @@ class OpenAICompatibleAdapter(BaseProviderAdapter):
         self, request: GatewayChatRequest, credential: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         target_url = build_chat_completions_url(request.base_url or "")
-        headers = {
+        headers_dict = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
         }
         if credential and credential.strip():
-            headers["Authorization"] = f"Bearer {credential.strip()}"
+            headers_dict["Authorization"] = f"Bearer {credential.strip()}"
+        headers = httpx.Headers(headers_dict, encoding="utf-8")
 
         payload: Dict[str, Any] = {
             "model": request.provider_model_id,

@@ -206,6 +206,33 @@ async def test_hf_provider_successful_stream():
         assert "hf_valid_token_123" not in resp.text
 
 
+# 6b. Hugging Face Inference Providers HTTP 402 Payment Required
+@pytest.mark.asyncio
+async def test_hf_provider_402_payment_required_error():
+    mock_resp = MagicMock()
+    mock_resp.status_code = 402
+    mock_resp.aread = AsyncMock(
+        return_value=b'{"error": "You have exceeded your monthly included credits for Inference Providers. Subscribe to PRO to get 20x more monthly included credits."}'
+    )
+    mock_cm = MockStreamContext(mock_resp)
+
+    with patch("httpx.AsyncClient.stream", return_value=mock_cm):
+        payload = {
+            "provider_type": "huggingface",
+            "execution_mode": "huggingface_inference_providers",
+            "provider_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+            "transient_credential": "hf_valid_token_123",
+            "messages": [{"role": "user", "content": "Hi"}],
+        }
+        resp = client.post("/api/gateway/chat/completions", json=payload)
+        assert resp.status_code == 200
+        events = parse_sse_response_body(resp.text)
+        error_ev = next(e for e in events if e.get("type") == "error")
+        assert "Payment Required" in error_ev["error"]
+        assert "exceeded your monthly included credits" in error_ev["error"]
+        assert error_ev["code"] == "hf_http_402"
+
+
 # 7. Hugging Face Dedicated Endpoints URL confusion
 def test_hf_endpoints_hub_url_rejected():
     payload = {
@@ -238,3 +265,151 @@ async def test_upstream_timeout_handling():
         error_ev = next(e for e in events if e.get("type") == "error")
         assert "timed out" in error_ev["error"].lower()
         assert error_ev["code"] == "connect_timeout"
+
+
+# --- Regression Tests for Contract Validation ---
+
+# 9. Valid Hugging Face Inference Providers request (without custom base_url)
+@pytest.mark.asyncio
+async def test_valid_hf_inference_providers_request():
+    mock_events = [
+        {"id": "1", "choices": [{"delta": {"content": "Hello HF"}, "finish_reason": "stop"}]},
+        "[DONE]",
+    ]
+    mock_cm = build_mock_sse_stream(mock_events)
+
+    with patch("httpx.AsyncClient.stream", return_value=mock_cm):
+        payload = {
+            "model_id": "model-hf-1",
+            "model_display_name": "Qwen 2.5 Coder",
+            "provider_type": "huggingface",
+            "execution_mode": "huggingface_inference_providers",
+            "provider_model_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+            "huggingface_repo_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+            "transient_credential": "hf_test_credential_123",
+            "messages": [{"role": "user", "content": "Test prompt"}],
+        }
+        resp = client.post("/api/gateway/chat/completions", json=payload)
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        events = parse_sse_response_body(resp.text)
+        meta = next(e for e in events if e.get("type") == "meta")
+        assert meta["provider_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
+
+
+# 10. Valid local OpenAI-compatible request (with base_url)
+@pytest.mark.asyncio
+async def test_valid_local_openai_compatible_request():
+    mock_events = [
+        {"id": "1", "choices": [{"delta": {"content": "Hello Local"}, "finish_reason": "stop"}]},
+        "[DONE]",
+    ]
+    mock_cm = build_mock_sse_stream(mock_events)
+
+    with patch("httpx.AsyncClient.stream", return_value=mock_cm):
+        payload = {
+            "model_id": "model-local-1",
+            "provider_type": "ollama",
+            "execution_mode": "local_openai_compatible",
+            "provider_model_id": "llama3.2:3b",
+            "base_url": "http://localhost:11434/v1",
+            "messages": [{"role": "user", "content": "Hello local model"}],
+        }
+        resp = client.post("/api/gateway/chat/completions", json=payload)
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+
+
+# 11. Valid dedicated Hugging Face endpoint request
+@pytest.mark.asyncio
+async def test_valid_dedicated_endpoint_request():
+    mock_events = [
+        {"id": "1", "choices": [{"delta": {"content": "Dedicated endpoint output"}, "finish_reason": "stop"}]},
+        "[DONE]",
+    ]
+    mock_cm = build_mock_sse_stream(mock_events)
+
+    with patch("httpx.AsyncClient.stream", return_value=mock_cm):
+        with patch("socket.getaddrinfo", return_value=[(None, None, None, None, ("54.210.1.1", 443))]):
+            payload = {
+                "model_id": "model-ded-1",
+                "provider_type": "huggingface",
+                "execution_mode": "huggingface_inference_endpoint",
+                "provider_model_id": "custom-endpoint",
+                "base_url": "https://xyz.endpoints.huggingface.cloud",
+                "transient_credential": "hf_secret_token",
+                "messages": [{"role": "user", "content": "Hello endpoint"}],
+            }
+            resp = client.post("/api/gateway/chat/completions", json=payload)
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers["content-type"]
+
+
+# 12. Missing provider model ID returns clear configuration error
+def test_missing_provider_model_id_error():
+    payload = {
+        "provider_type": "ollama",
+        "execution_mode": "local_openai_compatible",
+        "provider_model_id": "",
+        "base_url": "http://localhost:11434/v1",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    resp = client.post("/api/gateway/chat/completions", json=payload)
+    assert resp.status_code == 422
+    assert "Configuration error: provider_model_id is missing. Open Model Studio and configure the selected model." in resp.json()["detail"]
+
+
+# 13. Missing required endpoint URL returns clear configuration error
+def test_missing_required_endpoint_url_error():
+    payload = {
+        "provider_type": "ollama",
+        "execution_mode": "local_openai_compatible",
+        "provider_model_id": "llama3.2:3b",
+        "base_url": "",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    resp = client.post("/api/gateway/chat/completions", json=payload)
+    assert resp.status_code == 422
+    assert "base_url is required" in resp.json()["detail"]
+
+
+# 14. Missing or empty message returns clear validation error
+def test_empty_message_content_error():
+    payload = {
+        "provider_type": "ollama",
+        "execution_mode": "local_openai_compatible",
+        "provider_model_id": "llama3.2:3b",
+        "base_url": "http://localhost:11434/v1",
+        "messages": [{"role": "user", "content": "   "}],
+    }
+    resp = client.post("/api/gateway/chat/completions", json=payload)
+    assert resp.status_code == 422
+    assert "message content cannot be empty" in resp.json()["detail"].lower()
+
+
+def test_empty_messages_list_error():
+    payload = {
+        "provider_type": "ollama",
+        "execution_mode": "local_openai_compatible",
+        "provider_model_id": "llama3.2:3b",
+        "base_url": "http://localhost:11434/v1",
+        "messages": [],
+    }
+    resp = client.post("/api/gateway/chat/completions", json=payload)
+    assert resp.status_code == 422
+    assert "at least one message is required" in resp.json()["detail"].lower()
+
+
+# 15. Malformed workspace model configuration
+def test_malformed_workspace_model_configuration():
+    payload = {
+        "provider_type": "ollama",
+        "execution_mode": "local_openai_compatible",
+        "provider_model_id": "llama3.2:3b",
+        "base_url": "http://localhost:11434/v1",
+        "messages": [{"role": "invalid_role", "content": "Hi"}],
+        "temperature": 5.0,  # exceeds max 2.0
+    }
+    resp = client.post("/api/gateway/chat/completions", json=payload)
+    assert resp.status_code == 422
+    assert "Configuration error" in resp.json()["detail"]

@@ -64,13 +64,15 @@ class HFInferenceProvidersAdapter(BaseProviderAdapter):
     ) -> AsyncGenerator[Dict[str, Any], None]:
         target_model = (request.provider_model_id or request.huggingface_repo_id or "").strip()
 
-        headers = {
+        headers_dict = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
             "Authorization": f"Bearer {credential.strip() if credential else ''}",
         }
         if request.provider_selection and request.provider_selection.strip():
-            headers["X-HF-Provider"] = request.provider_selection.strip()
+            headers_dict["X-HF-Provider"] = request.provider_selection.strip()
+
+        headers = httpx.Headers(headers_dict, encoding="utf-8")
 
         payload: Dict[str, Any] = {
             "model": target_model,
@@ -101,6 +103,27 @@ class HFInferenceProvidersAdapter(BaseProviderAdapter):
                         sanitized_msg = f"Hugging Face Router returned HTTP {response.status_code}."
                         if response.status_code == 401:
                             sanitized_msg = "Invalid Hugging Face token. Please check your credential."
+                        elif response.status_code == 402:
+                            detail_msg = None
+                            try:
+                                import json
+                                parsed_err = json.loads(error_body.decode("utf-8", errors="replace"))
+                                if isinstance(parsed_err, dict):
+                                    if "error" in parsed_err and isinstance(parsed_err["error"], str):
+                                        detail_msg = parsed_err["error"]
+                                    elif "message" in parsed_err and isinstance(parsed_err["message"], str):
+                                        detail_msg = parsed_err["message"]
+                            except Exception:
+                                pass
+
+                            if detail_msg:
+                                sanitized_msg = f"Payment Required (HTTP 402): {detail_msg}"
+                            else:
+                                sanitized_msg = (
+                                    "Hugging Face Router returned HTTP 402 (Payment Required). "
+                                    "Your Hugging Face account has exhausted its free monthly inference credits, "
+                                    "or the selected model/provider requires an active payment method or PRO subscription."
+                                )
                         elif response.status_code == 403:
                             sanitized_msg = (
                                 f"Access forbidden to '{target_model}'. The model may be gated (e.g. Llama) "

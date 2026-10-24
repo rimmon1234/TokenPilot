@@ -112,6 +112,46 @@ export async function testModelConnection(
   return await res.json();
 }
 
+export function formatGatewayErrorMessage(errData: any, status: number): string {
+  if (!errData) {
+    return `Gateway returned HTTP ${status}`;
+  }
+
+  // If detail is a plain string, use it
+  if (typeof errData.detail === 'string') {
+    return errData.detail;
+  }
+
+  // If detail is an array of Pydantic validation errors
+  if (Array.isArray(errData.detail) && errData.detail.length > 0) {
+    const firstErr = errData.detail[0];
+    const loc = Array.isArray(firstErr.loc) ? firstErr.loc : [];
+    const field = loc.filter((x: any) => x !== 'body').join('.');
+    const rawMsg = firstErr.msg || 'Invalid field';
+
+    if (field === 'provider_model_id' || loc.includes('provider_model_id')) {
+      return 'Configuration error: provider_model_id is missing. Open Model Studio and configure the selected model.';
+    }
+    if (field === 'base_url' || loc.includes('base_url')) {
+      return 'Configuration error: base_url is required for this execution mode. Open Model Studio and configure the selected model.';
+    }
+    if (field.startsWith('messages') || loc.includes('messages')) {
+      if (loc.includes('content')) {
+        return 'Configuration error: message content cannot be empty.';
+      }
+      return 'Configuration error: at least one message is required.';
+    }
+
+    if (rawMsg.includes('at least 1 character')) {
+      return `Configuration error: ${field || 'field'} is missing or empty. Open Model Studio and configure the selected model.`;
+    }
+
+    return field ? `Configuration error on ${field}: ${rawMsg}` : `Configuration error: ${rawMsg}`;
+  }
+
+  return errData.message || errData.error || `Gateway returned HTTP ${status}`;
+}
+
 export async function streamChatCompletion(
   request: GatewayChatRequest,
   callbacks: StreamCallbacks,
@@ -126,11 +166,7 @@ export async function streamChatCompletion(
 
   if (!res.ok) {
     const errData = await res.json().catch(() => null);
-    const msg =
-      errData?.detail?.[0]?.msg ||
-      errData?.detail ||
-      errData?.message ||
-      `Gateway returned HTTP ${res.status}`;
+    const msg = formatGatewayErrorMessage(errData, res.status);
     callbacks.onError?.(msg, `http_${res.status}`);
     throw new Error(msg);
   }

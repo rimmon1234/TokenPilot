@@ -83,11 +83,12 @@ class HFInferenceEndpointsAdapter(BaseProviderAdapter):
         target_url = build_hf_endpoint_chat_url(request.base_url or "")
         sanitized_dest = sanitize_url_for_display(target_url)
 
-        headers = {
+        headers_dict = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
             "Authorization": f"Bearer {credential.strip() if credential else ''}",
         }
+        headers = httpx.Headers(headers_dict, encoding="utf-8")
 
         payload: Dict[str, Any] = {
             "model": request.provider_model_id,

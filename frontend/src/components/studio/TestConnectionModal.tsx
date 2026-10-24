@@ -269,8 +269,20 @@ export const TestConnectionModal: React.FC<TestConnectionModalProps> = ({
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="p-2 rounded bg-dark-900 border border-dark-800">
                 <span className="text-[10px] text-slate-400 block">Endpoint Reachable</span>
-                <strong className={testResult.endpoint_reachable ? 'text-emerald-400' : 'text-rose-400'}>
-                  {testResult.endpoint_reachable ? 'Yes (Responding)' : 'No (Unreachable)'}
+                <strong
+                  className={
+                    testResult.endpoint_reachable === true
+                      ? 'text-emerald-400'
+                      : testResult.endpoint_reachable === false
+                      ? 'text-rose-400'
+                      : 'text-slate-400'
+                  }
+                >
+                  {testResult.endpoint_reachable === true
+                    ? 'Yes (Responding)'
+                    : testResult.endpoint_reachable === false
+                    ? 'No (Unreachable)'
+                    : 'Unknown / Inconclusive'}
                 </strong>
               </div>
 

@@ -67,6 +67,9 @@ models_cache/
 checkpoints/
 data/raw/
 data/cache/
+data/datasets/
+!data/datasets/.gitkeep
 *.joblib
 *.onnx
 *.bin
+

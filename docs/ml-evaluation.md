@@ -41,9 +41,21 @@ Where:
 
 ---
 
-## 4. Benchmark Datasets & Reproducibility
+## 4. Benchmark Datasets & Reproducibility (Milestone M4)
 
-Milestone M4 introduces reproducible evaluation harnesses:
-- Standard task samples: Coding (HumanEval/MBPP subset), Reasoning (GSM8K subset), General Knowledge (MMLU subset).
-- Standardized judge scoring (LLM-as-a-judge or exact match checks).
-- Versioned benchmark runs stored in `BenchmarkRun` and `BenchmarkResult` entities.
+Milestone M4 introduces reproducible evaluation harnesses and standardized benchmark datasets:
+- **M4.1 — Benchmark Dataset Registry & Import Pipeline** (Implemented):
+  - Pre-registered benchmark templates:
+    - **GSM8K** (`openai/gsm8k`): 8.5K grade-school math word problems; evaluated via exact numeric answer extraction (`extract_gsm8k_final_answer`).
+    - **HumanEval** (`openai/openai_humaneval`): 164 Python programming challenges; evaluated via functional unit tests (untrusted code execution deferred to isolated sandboxes in M4.2).
+  - Provenance & Licenses: MIT license verified via Hugging Face Hub metadata; pinned commit SHAs recorded.
+  - Split Discipline & Roles:
+    - `held_out_test`: Upstream test sets (HumanEval test, GSM8K test) reserved strictly for evaluation; never contaminated into training sets.
+    - `dev_train` / `validation`: Derived exclusively from upstream train splits.
+  - Deterministic Sampling: Configurable subset limits (e.g. 5, 10, 25, 50, 100) sampled with fixed random seed (default `42`) to produce identical prompt sets across evaluation runs.
+  - Local Storage: Manifests (`.manifest.json`) and canonical records (`.jsonl`) stored locally under `data/datasets/` outside Git tracking.
+- **M4.2 — Multi-Model Benchmark Execution Engine** (Upcoming):
+  - Automated batch runner executing configured workspace models across imported prompt sets.
+  - Latency, token cost, and accuracy scoring (pass@k, exact match).
+  - Versioned benchmark runs stored in `BenchmarkRun` and `BenchmarkResult` entities.
+

@@ -10,13 +10,14 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
 | :--- | :--- | :--- | :--- |
 | **M0** | Architecture & Repo Setup | Architecture docs, schemas, git workflow, issue templates | **Complete** |
 | **M1** | Frontend/Backend Skeleton | FastAPI foundation, Vite/React shell, navigation, contracts | **Complete** |
-| **M2** | Model Studio & HF Discovery | HF Hub discovery, custom models, pool management, IndexedDB | **In Progress / Current** |
-| **M3** | Direct Gateway Calls & Usage | Inference adapters (HF Providers, OpenAI-compatible), usage accounting | Planned |
-| **M4** | Benchmarking & Evaluation | Evaluation harness, standard benchmark datasets, quality scoring | Planned |
+| **M2** | Model Studio & HF Discovery | HF Hub discovery, custom models, pool management, IndexedDB | **Complete** |
+| **M3** | Direct Gateway Calls & Usage | Inference adapters (HF Providers, OpenAI), telemetry, persistent usage | **Complete** |
+| **M4** | Benchmarking & Evaluation | Dataset registry, reproducible import, evaluation harness, scoring | **In Progress / Current (M4.1 Complete)** |
 | **M5** | Supervised ML Router | Feature extraction, scikit-learn / CatBoost training, model serialization | Planned |
 | **M6** | Intelligent Gateway Routing | Real-time ML routing, cost constraints, savings analytics | Planned |
 | **M7** | Auth & Cloud Workspaces | User auth, encrypted credential vault, multi-device cloud sync | Planned |
 | **M8** | Production Hardening | End-to-end integration tests, security audit, Docker deployment | Planned |
+
 
 ---
 
@@ -69,9 +70,16 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
 - `UsageEvent` recording (token counts, pricing snapshots, measured latency, status)
 
 ### Milestone M4: Dataset Construction & Model Benchmarking
-- Benchmark dataset ingestion (Reasoning, Coding, Conversational subsets)
-- Offline evaluation runner for latency, cost, and quality scoring
-- Populating model evaluation profiles (`ModelEvaluationProfile`)
+- **M4.1 — Benchmark Dataset Registry & Import Pipeline** (Complete):
+  - Pre-registered benchmark templates for GSM8K (math reasoning) and HumanEval (code generation).
+  - Reproducible import pipeline with Hugging Face Hub provenance, split discipline, and deterministic sampling seeds.
+  - Canonical `DatasetRecord` schema with evaluator-ready answers and untrusted code safeguards.
+  - Interactive Benchmark Lab UI for template browsing, sample previews, and canonical record inspection.
+- **M4.2 — Multi-Model Benchmark Execution Engine & Quality Scoring** (Planned):
+  - Automated batch inference runner evaluating configured workspace models on imported prompt sets.
+  - Evaluation scoring metrics (pass@k for HumanEval, exact numeric match for GSM8K).
+  - Empirical benchmarking profile generation (`ModelEvaluationProfile`) without fabricated metrics.
+
 
 ### Milestone M5: Supervised ML Router Training
 - Feature engineering on input prompts (syntactic tokens, regex markers, embeddings)

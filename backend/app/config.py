@@ -21,6 +21,11 @@ class Settings(BaseModel):
         "ALLOW_LOCAL_NETWORK_TESTS",
         "true" if os.getenv("ENVIRONMENT", "development") == "development" else "false"
     ).lower() in ("true", "1", "yes")
+    datasets_storage_dir: str = os.getenv(
+        "DATASETS_STORAGE_DIR",
+        str(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "datasets")))
+    )
 
 settings = Settings()
+
 

@@ -296,3 +296,73 @@ export interface StreamCallbacks {
   onError?: (error: string, code?: string) => void;
 }
 
+// Benchmark Dataset Registry & Import Types (M4.1)
+export type DatasetTaskType = 'math_reasoning' | 'code_generation';
+export type DatasetEvaluationRole = 'dev_train' | 'validation' | 'held_out_test';
+export type DatasetValidationStatus = 'verified' | 'unverified' | 'failed';
+
+export interface DatasetRecord {
+  record_id: string;
+  dataset_id: string;
+  dataset_revision: string;
+  source_split: string;
+  evaluation_role: DatasetEvaluationRole;
+  task_type: DatasetTaskType;
+  input_messages: { role: string; content: string }[];
+  reference_answer: string;
+  reference_metadata: Record<string, any>;
+  license: string;
+  source_url: string;
+  content_hash: string;
+}
+
+export interface DatasetTemplate {
+  id: string;
+  name: string;
+  description: string;
+  task_type: DatasetTaskType;
+  hf_repo_id: string;
+  default_config?: string;
+  available_splits: string[];
+  allowed_roles_per_split: Record<string, DatasetEvaluationRole[]>;
+  license: string;
+  license_verified: boolean;
+  pinned_revision: string;
+  recommended_subsets: number[];
+  sample_records: Record<string, any>[];
+}
+
+export interface DatasetImportRequest {
+  dataset_id: string;
+  split: string;
+  revision?: string;
+  subset_size?: number | null;
+  seed?: number;
+  evaluation_role: DatasetEvaluationRole;
+}
+
+export interface DatasetManifest {
+  manifest_id: string;
+  dataset_id: string;
+  dataset_name: string;
+  task_type: DatasetTaskType;
+  hf_repo_id: string;
+  source_url: string;
+  source_revision: string;
+  license: string;
+  license_verified: boolean;
+  source_split: string;
+  evaluation_role: DatasetEvaluationRole;
+  total_upstream_records?: number | null;
+  imported_record_count: number;
+  subset_size?: number | null;
+  sampling_seed?: number | null;
+  content_fingerprint: string;
+  imported_at: string;
+  validation_status: DatasetValidationStatus;
+  storage_path: string;
+  status_detail?: string | null;
+  is_benchmarked: boolean;
+}
+
+

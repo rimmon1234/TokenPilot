@@ -225,4 +225,70 @@ flowchart TD
 4. **Verified Cost Accounting**: Local compute is never claimed to be $0.00 "free". Unpriced or missing rates produce `unknown` cost status rather than false zero totals.
 5. **Zero-Secret Enforcement**: Transient API tokens never enter IndexedDB or serialized chat history. Raw prompt retention can be toggled by the user without compromising metric capture.
 
+---
+
+## 8. Benchmark Dataset Registry & Import Pipeline (Milestone M4.1)
+
+Milestone M4.1 provides the ground-truth data foundation for reproducible model evaluations and upcoming ML routing policy training.
+
+```mermaid
+graph TD
+    subgraph UI ["Benchmark Lab Frontend"]
+        TemplatesView["Templates & Registry View"]
+        ConfigForm["Import Configuration Form"]
+        ImportedView["Imported Datasets View"]
+        PreviewModal["Canonical Record Viewer"]
+    end
+
+    subgraph API ["FastAPI Dataset Router (/api/datasets)"]
+        TmplEndpoint["GET /templates & /templates/{id}"]
+        ImportEndpoint["POST /import"]
+        ManifestsEndpoint["GET /datasets & /{id}"]
+        RecordsEndpoint["GET /{id}/records"]
+    end
+
+    subgraph ServiceLayer ["Dataset Services"]
+        TemplatesRegistry["DatasetTemplate Registry"]
+        Importer["DatasetImporter"]
+        Normalizers["GSM8K & HumanEval Normalizers"]
+        Storage["DatasetStorageManager"]
+    end
+
+    subgraph Remote ["Upstream Repositories"]
+        HFHub["Hugging Face Hub API"]
+        HFServer["Hugging Face datasets-server"]
+    end
+
+    subgraph Disk ["Local Storage (Gitignored)"]
+        ManifestFiles[(".manifest.json metadata")]
+        JSONLFiles[(".jsonl canonical records")]
+    end
+
+    TemplatesView -->|Fetch available benchmarks| TmplEndpoint
+    TmplEndpoint --> TemplatesRegistry
+    ConfigForm -->|Submit import request| ImportEndpoint
+    ImportEndpoint --> Importer
+
+    Importer -->|Resolve commit SHA & license| HFHub
+    Importer -->|Fetch raw records| HFServer
+    Importer -->|Extract final answers / code| Normalizers
+    Normalizers -->|Canonical DatasetRecord| Importer
+    Importer -->|Save manifest & records| Storage
+    Storage --> ManifestFiles
+    Storage --> JSONLFiles
+
+    ImportedView -->|List manifests| ManifestsEndpoint
+    PreviewModal -->|Paginated canonical records| RecordsEndpoint
+    ManifestsEndpoint --> Storage
+    RecordsEndpoint --> Storage
+```
+
+### Key Architectural Tenets:
+1. **Strict Split Discipline**: Upstream `test` splits (e.g. HumanEval, GSM8K test) are immutably reserved for `held_out_test` role. The importer rejects attempts to relabel test splits as training data (`dev_train`).
+2. **Reproducible Sampling & Fingerprinting**: Configurable subsets use a fixed random seed (default `42`). Record IDs are deterministically generated from prompt keys, and an aggregate SHA-256 `content_fingerprint` uniquely identifies each import.
+3. **Untrusted Code Safeguards**: HumanEval imports capture prompts, canonical solutions, and test suites, but strictly enforce a no-execution policy during import.
+4. **Git Boundary Protection**: Downloaded records and manifests reside in `data/datasets/` (gitignored), ensuring large data artifacts are never committed to the code repository. Small deterministic fixtures are maintained for unit tests.
+5. **Truthful Evaluation States**: Datasets in the registry are explicitly marked as `unbenchmarked` until empirical multi-model evaluation runs are executed in Milestone M4.2.
+
+
 

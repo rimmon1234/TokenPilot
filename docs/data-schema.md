@@ -180,7 +180,57 @@ Schemas governing `POST /api/gateway/chat/completions` and Server-Sent Events:
   - `done`: `{"type": "done", "finish_reason": string, "latency_ms": float, "ttft_ms": float}`
   - `error`: `{"type": "error", "error": string, "code": string}`
 
+### J. Benchmark Dataset Registry & Canonical Records (M4.1)
+Reproducible ground-truth dataset schemas for offline benchmarking and ML router training:
+- **`DatasetRecord`**:
+  - `record_id`: string (deterministic identifier, e.g. `rec-gsm8k-test-0-4a8b...`)
+  - `dataset_id`: string (`gsm8k` | `humaneval`)
+  - `dataset_revision`: string (resolved Hugging Face commit SHA)
+  - `source_split`: string (`test` | `train`)
+  - `evaluation_role`: `'dev_train' | 'validation' | 'held_out_test'` (enforces strict split discipline)
+  - `task_type`: `'math_reasoning' | 'code_generation'`
+  - `input_messages`: array of `{ role: string, content: string }`
+  - `reference_answer`: string (unaltered upstream reference ground truth)
+  - `reference_metadata`: object (e.g. `extracted_answer`, `entry_point`, `test`, `execution_policy`)
+  - `license`: string (recorded from dataset card, e.g. `MIT`)
+  - `source_url`: string (upstream Hugging Face repository URL)
+  - `content_hash`: string (SHA-256 fingerprint of prompt + reference)
+- **`DatasetTemplate`**:
+  - `id`: string (`gsm8k`, `humaneval`)
+  - `name`: string
+  - `description`: string
+  - `task_type`: TaskType
+  - `hf_repo_id`: string
+  - `available_splits`: array of strings
+  - `allowed_roles_per_split`: map of split -> allowed roles (prevents leaking test records into training)
+  - `license`: string
+  - `license_verified`: boolean
+  - `pinned_revision`: string (verified commit SHA fallback)
+  - `recommended_subsets`: array of integers (e.g. `[5, 10, 25, 50, 100]`)
+  - `sample_records`: array of sample preview records
+- **`DatasetManifest`**:
+  - `manifest_id`: string (unique import identifier, e.g. `ds-gsm8k-test-held_out_test-sub10-a1b2c3`)
+  - `dataset_id`: string
+  - `dataset_name`: string
+  - `task_type`: TaskType
+  - `hf_repo_id`: string
+  - `source_url`: string
+  - `source_revision`: string
+  - `license`: string
+  - `source_split`: string
+  - `evaluation_role`: EvaluationRole
+  - `total_upstream_records`: optional integer
+  - `imported_record_count`: integer
+  - `subset_size`: optional integer (null if full split imported)
+  - `sampling_seed`: optional integer (pinned seed for reproducible sampling, e.g. `42`)
+  - `content_fingerprint`: string (SHA-256 hash over sorted canonical record content hashes)
+  - `imported_at`: datetime / ISO timestamp
+  - `validation_status`: `'verified' | 'unverified' | 'failed'`
+  - `storage_path`: string (local file path to `.jsonl` lines)
+  - `is_benchmarked`: boolean (always `false` upon import; models remain `unbenchmarked` until M4.2 evaluation)
+
 ---
+
 
 ## 2. Multi-Tenant Future Proofing
 

@@ -53,6 +53,16 @@ from app.schemas.gateway import (
     StreamDoneEvent,
     StreamErrorEvent,
 )
+from app.schemas.dataset import (
+    TaskType,
+    EvaluationRole,
+    DatasetValidationStatus,
+    DatasetRecord,
+    DatasetTemplate,
+    DatasetImportRequest,
+    DatasetManifest,
+)
+
 
 __all__ = [
     "ExecutionMode",
@@ -99,4 +109,12 @@ __all__ = [
     "StreamUsageEvent",
     "StreamDoneEvent",
     "StreamErrorEvent",
+    "TaskType",
+    "EvaluationRole",
+    "DatasetValidationStatus",
+    "DatasetRecord",
+    "DatasetTemplate",
+    "DatasetImportRequest",
+    "DatasetManifest",
 ]
+

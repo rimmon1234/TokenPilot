@@ -263,8 +263,32 @@ Persisted inside `BenchmarkRun.results_summary`:
   - `unevaluated_results`: integer
   - `scorable_accuracy`: float or null
   - `end_to_end_accuracy`: float or null
+  - `provider_type`: optional string (`ollama`, `hf_serverless`, `custom_openai`)
+  - `provider_model_id`: optional string (actual provider model identifier used at execution)
+  - `avg_latency_ms`: optional float (mean end-to-end latency in milliseconds)
+  - `median_latency_ms`: optional float (median latency via `statistics.median`)
+  - `avg_ttft_ms`: optional float (mean time to first token in milliseconds)
+  - `total_prompt_tokens`: optional integer
+  - `total_completion_tokens`: optional integer
+  - `total_tokens`: optional integer
+  - `token_provenance`: string (`provider_reported`, `estimated`, `unavailable`)
+  - `missing_usage_count`: integer (records with missing or unavailable token usage)
+  - `total_cost_usd`: optional float (total dollar cost for all evaluated requests)
+  - `cost_per_question_usd`: optional float (average cost per attempted question)
+  - `unknown_cost_count`: integer (records with unknown or unmetered pricing)
+  - `pricing_source`: optional string
+  - `is_pareto_efficient`: optional boolean (True if non-dominated in quality vs cost; False if dominated; None if unpriced)
 
-#### `BenchmarkRun`
+#### `BenchmarkRunExportReport`
+Structure returned by `GET /api/benchmarks/runs/{run_id}/export?format=json`:
+- `report_type`: string (`tokenpilot_benchmark_report`)
+- `exported_at`: datetime (ISO 8601)
+- `run_id`: string
+- `dataset`: object (`manifest_id`, `dataset_name`, `dataset_id`, `resolved_revision`, `source_split`, `tested_record_count`, `sampling_seed`)
+- `generation_config`: object (`temperature`, `max_tokens`, `top_p`)
+- `model_configurations`: list of `BenchmarkModelConfig` (secrets strictly excluded)
+- `scoring_summary`: `BenchmarkRunScoringSummary` (with Pareto frontier and telemetry aggregates)
+- `results`: list of `BenchmarkResult` (per-record prompt, output, ground truth, extracted answer, status, and telemetry)
 Represents an empirical evaluation run against an imported dataset manifest across a set of workspace models.
 - **Fields**:
   - `id`: string (e.g., `run-gsm8k-1741520000`)

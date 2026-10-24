@@ -77,6 +77,8 @@ class ModelScoringSummary(BaseModel):
     """Scoring metrics for a single model within a benchmark run."""
     model_id: str
     display_name: str
+    provider_type: Optional[str] = None
+    provider_model_id: Optional[str] = None
     attempted_questions: int = 0
     successful_generations: int = 0
     correct_answers: int = 0
@@ -86,6 +88,22 @@ class ModelScoringSummary(BaseModel):
     unevaluated_results: int = 0
     scorable_accuracy: Optional[float] = None  # correct / (correct + incorrect)
     end_to_end_accuracy: Optional[float] = None  # correct / attempted_questions
+    # Latency telemetry (ms)
+    avg_latency_ms: Optional[float] = None
+    median_latency_ms: Optional[float] = None
+    avg_ttft_ms: Optional[float] = None
+    # Token usage & provenance
+    total_prompt_tokens: Optional[int] = None
+    total_completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    token_provenance: str = "unavailable"
+    missing_usage_count: int = 0
+    # Cost metrics (USD)
+    total_cost_usd: Optional[float] = None
+    cost_per_question_usd: Optional[float] = None
+    unknown_cost_count: int = 0
+    pricing_source: Optional[str] = None
+    is_pareto_efficient: Optional[bool] = None
 
 
 class BenchmarkRunScoringSummary(BaseModel):

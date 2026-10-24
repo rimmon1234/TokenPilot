@@ -91,9 +91,13 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
   - Standardized metrics: Scorable Accuracy and End-to-End Correct-Answer Rate with explicit zero-denominator handling.
   - Safe atomic file persistence (`.jsonl.tmp` and `os.replace`) and idempotent repeated scoring.
   - Benchmark Lab UI scoring action, summary metrics banner, outcome filters, and candidate vs reference answer inspection.
-- **M4.2.3 — Benchmark Lab Results & Model Comparison UI** (Upcoming):
-  - Multi-model comparison matrix, trade-off frontier curves (accuracy vs. cost vs. latency).
-  - Exportable benchmark reports and model evaluation profiles.
+- **M4.2.3 — Model Comparison UI and Benchmark Reports** (Completed):
+  - Model comparison matrix with attempted questions, scorable accuracy, end-to-end rate, latency (mean and median), tokens & provenance, cost per question, and missing-usage/unpriced counts.
+  - Interactive SVG quality-versus-cost scatter plot with empirical Pareto frontier calculation (identifying non-dominated models).
+  - Scientific comparison fairness guarantees (within-run identical prompt baseline validation).
+  - Dedicated "Local Hardware & Unpriced Models" shelf preserving accurate cost separation without artificial zero coordinates.
+  - Detailed model-result inspection viewer with multi-dimensional model and outcome filters.
+  - Reproducible secret-free JSON and RFC 4180 CSV report export endpoints.
 
 
 ### Milestone M5: Supervised ML Router Training

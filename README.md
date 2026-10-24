@@ -104,7 +104,7 @@ npm run build
   - [x] **M4.1 — Benchmark Dataset Registry & Import Pipeline**
   - [x] **M4.2.1 — Multi-Model Benchmark Execution Engine**
   - [x] **M4.2.2 — GSM8K Evaluation & Scoring**
-  - [ ] **M4.2.3 — Benchmark Lab Results & Model Comparison UI** (Upcoming)
+  - [x] **M4.2.3 — Model Comparison UI & Benchmark Reports**
 - [ ] **M5 — Supervised ML Router Training**
 - [ ] **M6 — Automatic Routing & Cost Analytics**
 - [ ] **M7 — Auth, Sessions & Encrypted Cloud Sync**

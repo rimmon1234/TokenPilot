@@ -418,6 +418,68 @@ flowchart TD
 5. **Atomic File Persistence**: Storage updates write to `.tmp` files and utilize atomic OS rename (`os.replace`) to ensure zero partial-write corruption upon crashes or cancellation.
 6. **Full Telemetry & Pricing Invariance**: Scoring updates only evaluation fields (`evaluation_status`, `extracted_answer`, `evaluation_details`, `score`, `metric_name`). It never modifies latency, TTFT, token counts, pricing snapshots, or costs.
 
+---
+
+## 11. Model Comparison UI, Pareto Frontier & Benchmark Reporting Subsystem (M4.2.3)
+
+Milestone M4.2.3 provides multi-model comparative analysis, interactive quality-versus-cost Pareto visualization, detailed model-result inspection, and reproducible report exports without rerunning inference.
+
+```mermaid
+flowchart TD
+    subgraph UI ["Benchmark Lab: Comparison & Reports (Tab M4.2.3)"]
+        RunSelector["Run Selector Dropdown"]
+        FairnessBanner["Fairness Baseline Banner (Split, Seed, Temp, Revision)"]
+        CompMatrix["Model Comparison Matrix Table"]
+        ScatterPlot["Quality vs. Cost SVG Scatter Plot"]
+        ParetoLine["Empirical Pareto Frontier Curve"]
+        UnpricedShelf["Local Hardware & Unpriced Shelf"]
+        Inspector["Detailed Result & Answer Comparison Viewer"]
+        ExportBtn["Export JSON / CSV Action Buttons"]
+    end
+
+    subgraph BackendAPI ["FastAPI Reporting Endpoints"]
+        ExportRoute["GET /api/benchmarks/runs/{run_id}/export?format=json|csv"]
+        ScoreRoute["POST /api/benchmarks/runs/{run_id}/score"]
+    end
+
+    subgraph ParetoEngine ["Pareto Analysis Engine (app.services.benchmark.evaluator)"]
+        DominanceCheck["Pareto Dominance Check: Cost(A) <= Cost(B) & Acc(A) >= Acc(B)"]
+        FrontierAssign["Assign is_pareto_efficient (True / False / None)"]
+        LatencyStats["Mean & Median Latency Calculator (statistics.median)"]
+        TokenSums["Token Sums & Provenance Aggregator"]
+    end
+
+    subgraph Exporters ["Safe Report Exporters (app.api.routes_benchmarks)"]
+        JSONExporter["Safe JSON Exporter (Metadata + Telemetry + Records)"]
+        CSVExporter["RFC 4180 CSV Writer (Comments + Matrix + Result Rows)"]
+        SecretFilter["Strict Secret & Credential Exclusion Filter"]
+    end
+
+    RunSelector -->|Select Run| FairnessBanner
+    FairnessBanner --> CompMatrix
+    CompMatrix --> ScatterPlot
+    ParetoEngine -->|Frontier Metrics| CompMatrix
+    DominanceCheck --> FrontierAssign
+    FrontierAssign --> ScatterPlot
+    ScatterPlot --> ParetoLine
+    ScatterPlot --> UnpricedShelf
+    CompMatrix --> Inspector
+    ExportBtn -->|Request Export| ExportRoute
+    ExportRoute --> SecretFilter
+    SecretFilter --> JSONExporter
+    SecretFilter --> CSVExporter
+```
+
+### Architectural Highlights & Guarantees:
+1. **Scientific Fairness Invariant**: Comparative rankings are valid only when models evaluated the identical question prompts under identical conditions (matching dataset revision, source split, tested record IDs, sampling seed, and generation temperature). TokenPilot explicitly banners these baselines and prevents misleading cross-run aggregation.
+2. **Empirical Pareto Frontier**:
+   - Model $A$ dominates Model $B$ ($A \succ B$) if $\text{Cost}(A) \le \text{Cost}(B)$ and $\text{Quality}(A) \ge \text{Quality}(B)$, with at least one strict inequality.
+   - Non-dominated models receive `is_pareto_efficient = True`. Dominated models receive `is_pareto_efficient = False`.
+   - Models without pricing receive `is_pareto_efficient = None` and are cleanly excluded from dollar-axis rankings.
+3. **Truthful Local Hardware Treatment**: Local Ollama execution carries no per-token billing. Assigning an artificial $0.00 position would falsely declare local models Pareto-optimal over all cloud alternatives; TokenPilot places unpriced compute on a dedicated shelf, keeping the cost axis methodologically sound.
+4. **Export Safety**: JSON and CSV exports exclude all secrets, API tokens, and transient credentials. CSV rows are generated using Python's `csv.writer` with RFC 4180 quoting to protect against spreadsheet formula injection and delimiter corruption.
+
+
 
 
 

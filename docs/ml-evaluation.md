@@ -86,6 +86,33 @@ Milestone M4 introduces reproducible evaluation harnesses and standardized bench
     - **End-to-End Correct-Answer Rate**: $\text{correct} / \text{attempted\_questions}$. Penalizes generation failures and unparseable outputs; returns `null` if denominator is 0.
   - Atomic persistence: Writes to temporary files (`.jsonl.tmp`) and replaces via atomic file operations (`os.replace`) to prevent corruption during partial writes.
   - Telemetry preservation: Scoring never alters original latency, TTFT, token counts, or pricing snapshot cost calculations.
-- **M4.2.3 — Benchmark Lab Results & Model Comparison UI** (Upcoming):
-  - Model comparison matrix, quality vs. cost Pareto frontier curves, and exportable reports.
+- **M4.2.3 — Model Comparison UI and Benchmark Reports** (Implemented):
+  - **Controlled Intra-Run Comparison Baseline**:
+    - Direct head-to-head comparisons are scientifically valid only when models are evaluated against the exact same dataset manifest, source split, resolved Git commit revision, test record IDs, sampling seed, and generation temperature.
+    - Prevents misleading cross-ranking between runs with disparate prompt sets, sampling configurations, or versions.
+  - **Model Comparison Matrix**:
+    - Per-model attempted questions, successful generations, correct answers, incorrect answers, unparseable answers, and failed requests.
+    - **Scorable Accuracy**: $\text{correct} / (\text{correct} + \text{incorrect})$. Reflects algorithmic reasoning capability on parseable responses.
+    - **End-to-End Correct-Answer Rate**: $\text{correct} / \text{attempted\_questions}$. Reflects real-world operational reliability, penalizing API network errors and formatting drops.
+    - **Mean and Median Latency**: Millisecond timing calculated via `statistics.median` with safe handling when observations are insufficient.
+    - **Token Usage and Provenance**: Sum of prompt and completion tokens with provenance classification (`provider_reported`, `estimated`, `unavailable`) and missing-usage counters.
+    - **Estimated Cost per Question and Total Cost**: Dollar billing per question and per run with unpriced request counts explicitly displayed.
+    - **Distinct State Tracking**: Explicitly separates `0.0`, `unknown`, and `unavailable`. Missing costs are not converted into artificial zeroes, and failed requests are not converted into incorrect answers.
+  - **Quality vs. Cost Trade-Off & Pareto Frontier**:
+    - **Pareto Dominance**: A model $A$ strictly dominates model $B$ ($A \succ B$) if and only if:
+      $$\text{Cost}(A) \le \text{Cost}(B) \quad \land \quad \text{Accuracy}(A) \ge \text{Accuracy}(B)$$
+      with at least one strict inequality ($\text{Cost}(A) < \text{Cost}(B)$ or $\text{Accuracy}(A) > \text{Accuracy}(B)$).
+    - **Pareto Efficiency**: A model is non-dominated (Pareto-efficient) if no other model in the measured set dominates it.
+    - **Relativity**: Pareto efficiency is strictly relative to the measured candidate set and chosen metrics; it does not constitute a universal optimality claim.
+    - **Local & Unpriced Models**: Local hardware execution (e.g. Ollama `llama3.2:3b`) does not incur per-token cloud billing. Rather than assigning an artificial $0.00 coordinate (which would falsely dominate commercial cloud models), TokenPilot isolates unpriced models onto a dedicated "Local Hardware & Unpriced Models" shelf.
+    - **Single-Model Evaluation**: Runs with only 1 evaluated model display a dedicated notice explaining that Pareto dominance and head-to-head trade-off curves require at least 2 comparable models.
+  - **Detailed Model-Result Inspector**:
+    - Verbatim prompt viewer, model output completion, reference answer, extracted numerical answer, evaluation status, latency, TTFT, token counts, pricing basis, and sanitized error messages.
+    - Multi-dimensional filtering by model and outcome (`All`, `Correct`, `Incorrect`, `Unparseable`, `Failed`).
+    - Full-text search across prompts, model completions, model names, and numerical answers.
+  - **Exportable Benchmark Reports**:
+    - `GET /api/benchmarks/runs/{run_id}/export?format=json|csv`
+    - **JSON Export**: Complete run metadata, configuration snapshots, per-model scoring summaries, latency percentiles, and individual evaluation records.
+    - **CSV Export**: Clean RFC 4180 compliant CSV format with run metadata comments, Model Performance Summary table, and Detailed Evaluation Records table. Escapes quotes, commas, and line breaks safely.
+    - **Secret Exclusion Guarantee**: Excludes API tokens, transient credentials, and workspace secrets. Missing values are represented as explicit `null` / `Unknown` states without synthetic inflation.
 

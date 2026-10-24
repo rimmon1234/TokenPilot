@@ -24,6 +24,14 @@ import {
   Check,
   XCircle,
   HelpCircle,
+  BarChart3,
+  FileSpreadsheet,
+  FileText,
+  TrendingUp,
+  Scale,
+  Target,
+  Zap,
+  Sparkles,
 } from 'lucide-react';
 import {
   DatasetTemplate,
@@ -34,6 +42,7 @@ import {
   BenchmarkRun,
   BenchmarkResult,
   BenchmarkModelConfig,
+  ModelScoringSummary,
 } from '../types';
 import {
   fetchDatasetTemplates,
@@ -49,11 +58,12 @@ import {
   fetchBenchmarkResults,
   cancelBenchmarkRun,
   scoreBenchmarkRun,
+  downloadBenchmarkReport,
 } from '../services/benchmark_service';
 import { workspaceRepo } from '../storage/indexeddb_repository';
 
 export const BenchmarkLabPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'templates' | 'imported' | 'runs'>('templates');
+  const [activeTab, setActiveTab] = useState<'templates' | 'imported' | 'runs' | 'comparison'>('templates');
   const [templates, setTemplates] = useState<DatasetTemplate[]>([]);
   const [importedDatasets, setImportedDatasets] = useState<DatasetManifest[]>([]);
   const [benchmarkRuns, setBenchmarkRuns] = useState<BenchmarkRun[]>([]);
@@ -107,6 +117,15 @@ export const BenchmarkLabPage: React.FC = () => {
   const [resultsOutcomeFilter, setResultsOutcomeFilter] = useState<string>('all');
   const [scoringRunId, setScoringRunId] = useState<string | null>(null);
 
+  // Model Comparison & Benchmark Reports States (Milestone M4.2.3)
+  const [selectedComparisonRunId, setSelectedComparisonRunId] = useState<string | null>(null);
+  const [comparisonResults, setComparisonResults] = useState<BenchmarkResult[]>([]);
+  const [comparisonLoading, setComparisonLoading] = useState<boolean>(false);
+  const [comparisonFilterModel, setComparisonFilterModel] = useState<string>('all');
+  const [comparisonFilterOutcome, setComparisonFilterOutcome] = useState<string>('all');
+  const [comparisonSearchText, setComparisonSearchText] = useState<string>('');
+  const [exportingFormat, setExportingFormat] = useState<'json' | 'csv' | null>(null);
+
   const loadData = async () => {
     setLoading(true);
     setErrorBanner(null);
@@ -121,6 +140,21 @@ export const BenchmarkLabPage: React.FC = () => {
       setImportedDatasets(importedData);
       setBenchmarkRuns(runsData);
       setWorkspaceModels(modelsData);
+
+      // Initialize comparison run selection if not set
+      if (runsData.length > 0) {
+        setSelectedComparisonRunId((prev) => {
+          if (prev && runsData.some((r) => r.id === prev)) return prev;
+          const preferredRun =
+            runsData.find(
+              (r) =>
+                r.status === 'completed' &&
+                r.results_summary?.model_metrics &&
+                Object.keys(r.results_summary.model_metrics).length > 0
+            ) || runsData[0];
+          return preferredRun.id;
+        });
+      }
 
       // Check for in-flight running runs to resume polling
       const runningRun = runsData.find((r) => r.status === 'running' || r.status === 'pending');
@@ -194,6 +228,52 @@ export const BenchmarkLabPage: React.FC = () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, [activeRunId]);
+
+  const loadComparisonRunDetails = async (runId: string) => {
+    setComparisonLoading(true);
+    try {
+      const results = await fetchBenchmarkResults(runId, 500, 0);
+      setComparisonResults(results);
+    } catch (err: any) {
+      setErrorBanner(`Failed to load comparison results: ${err.message}`);
+    } finally {
+      setComparisonLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'comparison' && selectedComparisonRunId) {
+      loadComparisonRunDetails(selectedComparisonRunId);
+    }
+  }, [activeTab, selectedComparisonRunId]);
+
+  const handleExportReport = async (format: 'json' | 'csv') => {
+    if (!selectedComparisonRunId) return;
+    setExportingFormat(format);
+    try {
+      await downloadBenchmarkReport(selectedComparisonRunId, format);
+      setSuccessBanner(`Exported benchmark report (${format.toUpperCase()}) for ${selectedComparisonRunId}.`);
+    } catch (err: any) {
+      setErrorBanner(`Failed to export benchmark report: ${err.message}`);
+    } finally {
+      setExportingFormat(null);
+    }
+  };
+
+  const handleScoreComparisonRun = async () => {
+    if (!selectedComparisonRunId) return;
+    setScoringRunId(selectedComparisonRunId);
+    try {
+      const updatedRun = await scoreBenchmarkRun(selectedComparisonRunId);
+      setBenchmarkRuns((prev) => prev.map((r) => (r.id === updatedRun.id ? updatedRun : r)));
+      await loadComparisonRunDetails(selectedComparisonRunId);
+      setSuccessBanner(`Successfully evaluated and scored run ${selectedComparisonRunId}.`);
+    } catch (err: any) {
+      setErrorBanner(`Failed to score benchmark run: ${err.message}`);
+    } finally {
+      setScoringRunId(null);
+    }
+  };
 
   const handleSplitChange = (templateId: string, newSplit: string) => {
     const tmpl = templates.find((t) => t.id === templateId);
@@ -453,6 +533,42 @@ export const BenchmarkLabPage: React.FC = () => {
     return promptText.includes(term) || outText.includes(term) || modelText.includes(term) || ansText.includes(term);
   });
 
+  // Derived Comparison States (Milestone M4.2.3)
+  const selectedComparisonRun = benchmarkRuns.find((r) => r.id === selectedComparisonRunId) || null;
+  const comparisonModelMetrics: Record<string, ModelScoringSummary> =
+    selectedComparisonRun?.results_summary?.model_metrics || {};
+  const comparisonModelList = Object.values(comparisonModelMetrics);
+
+  const filteredComparisonResults = comparisonResults.filter((res) => {
+    if (comparisonFilterModel !== 'all' && res.model_id !== comparisonFilterModel) {
+      return false;
+    }
+    if (comparisonFilterOutcome !== 'all') {
+      const status = res.evaluation_status || 'unevaluated';
+      if (comparisonFilterOutcome !== status) {
+        return false;
+      }
+    }
+    if (comparisonSearchText.trim()) {
+      const term = comparisonSearchText.toLowerCase();
+      const promptText = res.prompt_text?.toLowerCase() || '';
+      const outText = res.output_text?.toLowerCase() || '';
+      const modelText = res.model_display_name?.toLowerCase() || '';
+      const ansText = res.extracted_answer?.toLowerCase() || '';
+      const refText = res.reference_answer?.toLowerCase() || '';
+      if (
+        !promptText.includes(term) &&
+        !outText.includes(term) &&
+        !modelText.includes(term) &&
+        !ansText.includes(term) &&
+        !refText.includes(term)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  });
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -611,6 +727,21 @@ export const BenchmarkLabPage: React.FC = () => {
           Benchmark Evaluation Runs
           <span className="px-1.5 py-0.5 rounded-full bg-dark-800 text-[10px] text-slate-300">
             {benchmarkRuns.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('comparison')}
+          className={`pb-3 text-xs font-medium transition-colors flex items-center gap-2 border-b-2 -mb-px ${
+            activeTab === 'comparison'
+              ? 'border-brand-500 text-slate-100 font-semibold'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <BarChart3 className="w-3.5 h-3.5 text-cyan-400" />
+          Model Comparison & Reports
+          <span className="px-1.5 py-0.5 rounded-full bg-cyan-950/60 border border-cyan-800/60 text-[10px] text-cyan-300 font-semibold">
+            M4.2.3
           </span>
         </button>
 
@@ -788,6 +919,834 @@ export const BenchmarkLabPage: React.FC = () => {
                 );
               })}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: MODEL COMPARISON & BENCHMARK REPORTS (Milestone M4.2.3) */}
+      {activeTab === 'comparison' && (
+        <div className="space-y-6">
+          {/* Header Controls: Run Selector & Export Actions */}
+          <div className="dev-card p-5 border border-dark-800 bg-dark-900 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1 flex-1">
+              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Target className="w-3.5 h-3.5 text-cyan-400" />
+                Select Benchmark Run to Analyze
+              </label>
+              <div className="flex flex-wrap items-center gap-3">
+                <select
+                  value={selectedComparisonRunId || ''}
+                  onChange={(e) => setSelectedComparisonRunId(e.target.value)}
+                  className="bg-dark-850 border border-dark-750 text-slate-200 text-xs rounded-lg px-3 py-2 min-w-[280px] md:min-w-[360px] focus:border-brand-500 focus:outline-none"
+                >
+                  {benchmarkRuns.length === 0 ? (
+                    <option value="">No benchmark runs available</option>
+                  ) : (
+                    benchmarkRuns.map((r) => {
+                      const modelCount = r.model_configs?.length || 0;
+                      const hasScores =
+                        r.results_summary?.model_metrics &&
+                        Object.keys(r.results_summary.model_metrics).length > 0;
+                      return (
+                        <option key={r.id} value={r.id}>
+                          {r.id} — {r.dataset_name} ({r.source_split}, N={r.subset_size || r.progress?.total_items || 'all'}, {modelCount} models) [
+                          {r.status}
+                          {hasScores ? ' • Scored' : ' • Unscored'}]
+                        </option>
+                      );
+                    })
+                  )}
+                </select>
+
+                {/* Score Run Button if completed but unscored */}
+                {selectedComparisonRun &&
+                  selectedComparisonRun.status === 'completed' &&
+                  (!selectedComparisonRun.results_summary?.model_metrics ||
+                    Object.keys(selectedComparisonRun.results_summary.model_metrics).length === 0) && (
+                    <button
+                      onClick={handleScoreComparisonRun}
+                      disabled={scoringRunId === selectedComparisonRun.id}
+                      className="dev-btn-primary text-xs px-3.5 py-2 flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 border-none shadow-md shadow-emerald-950/40"
+                    >
+                      {scoringRunId === selectedComparisonRun.id ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          Scoring Run...
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-3.5 h-3.5" />
+                          Score Run Now
+                        </>
+                      )}
+                    </button>
+                  )}
+              </div>
+            </div>
+
+            {/* Export buttons */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleExportReport('json')}
+                disabled={!selectedComparisonRunId || exportingFormat !== null}
+                className="dev-btn-secondary text-xs px-3 py-2 flex items-center gap-1.5 hover:border-cyan-500/50 hover:text-cyan-300"
+                title="Download JSON report with full metadata, metrics, and evaluation records"
+              >
+                {exportingFormat === 'json' ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                )}
+                Export JSON
+              </button>
+
+              <button
+                onClick={() => handleExportReport('csv')}
+                disabled={!selectedComparisonRunId || exportingFormat !== null}
+                className="dev-btn-secondary text-xs px-3 py-2 flex items-center gap-1.5 hover:border-emerald-500/50 hover:text-emerald-300"
+                title="Download CSV report with RFC 4180 escaping"
+              >
+                {exportingFormat === 'csv' ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                ) : (
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                )}
+                Export CSV
+              </button>
+            </div>
+          </div>
+
+          {!selectedComparisonRun ? (
+            <div className="dev-card p-12 text-center max-w-xl mx-auto border-dashed border-dark-750">
+              <Scale className="w-10 h-10 text-slate-500 mx-auto mb-3" />
+              <h3 className="text-sm font-semibold text-slate-200">No Benchmark Run Selected</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Execute a benchmark run or select an existing one above to compare model reasoning accuracy and cost efficiency.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Controlled Comparison Baseline & Metadata Banner */}
+              <div className="dev-card p-4 border border-dark-800 bg-dark-900/80 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-cyan-950/60 border border-cyan-800/60 text-cyan-300 font-semibold text-[11px]">
+                      <ShieldCheck className="w-3 h-3 text-cyan-400" />
+                      Controlled Intra-Run Comparison
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono">
+                      Run ID: <strong className="text-slate-200">{selectedComparisonRun.id}</strong>
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300">
+                    <span>
+                      Dataset: <strong className="text-slate-100">{selectedComparisonRun.dataset_name}</strong>
+                    </span>
+                    <span>
+                      Split: <strong className="text-slate-100">{selectedComparisonRun.source_split}</strong>
+                    </span>
+                    <span>
+                      Revision:{' '}
+                      <strong className="text-slate-100 font-mono text-[11px]">
+                        {selectedComparisonRun.dataset_revision || 'canonical'}
+                      </strong>
+                    </span>
+                    <span>
+                      Tested Questions:{' '}
+                      <strong className="text-slate-100">
+                        {selectedComparisonRun.subset_size || selectedComparisonRun.progress?.total_items || 'all'}
+                      </strong>
+                    </span>
+                    <span>
+                      Config:{' '}
+                      <strong className="text-slate-100 font-mono text-[11px]">
+                        temp={selectedComparisonRun.generation_settings?.temperature ?? 0.0}, seed=
+                        {selectedComparisonRun.seed ?? 'N/A'}
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-400 max-w-sm leading-relaxed border-t md:border-t-0 md:border-l border-dark-800 pt-2 md:pt-0 md:pl-4">
+                  <span className="text-cyan-300 font-medium">Scientific Fairness Guarantee:</span> All models in this run evaluated the identical question prompts and sampling configuration. TokenPilot does not cross-rank runs with disparate prompt sets.
+                </div>
+              </div>
+
+              {/* Single Model Notice (when applicable) */}
+              {selectedComparisonRun.model_configs?.length === 1 && (
+                <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-800/50 flex items-start gap-3">
+                  <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-xs text-slate-300 leading-relaxed">
+                    <span className="font-semibold text-amber-300">Single-Model Evaluation:</span> This benchmark run contains 1 model ({selectedComparisonRun.model_configs[0].display_name}). Metric breakdowns and individual evaluation records are fully available below. Head-to-head comparison matrices and Pareto frontier trade-off curves require at least two evaluated models.
+                  </div>
+                </div>
+              )}
+
+              {/* Section 1: Model Comparison Matrix */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                    <Scale className="w-4 h-4 text-brand-400" />
+                    Model Performance & Cost Matrix
+                  </h3>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    {comparisonModelList.length} model{comparisonModelList.length === 1 ? '' : 's'} recorded
+                  </span>
+                </div>
+
+                {comparisonModelList.length === 0 ? (
+                  <div className="dev-card p-8 text-center border-dark-800">
+                    <p className="text-xs text-slate-400">
+                      No scored models found for this run. Click &quot;Score Run Now&quot; to evaluate responses.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="dev-card border border-dark-800 overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-200 border-collapse">
+                      <thead>
+                        <tr className="border-b border-dark-800 bg-dark-850/60 text-[11px] text-slate-400 uppercase tracking-wider font-semibold">
+                          <th className="py-3 px-3.5">Model / Provider</th>
+                          <th className="py-3 px-3 text-center">Attempted</th>
+                          <th className="py-3 px-3 text-center">Correct / Inc / Unp / Fail</th>
+                          <th className="py-3 px-3 text-right">Scorable Acc</th>
+                          <th className="py-3 px-3 text-right">E2E Rate</th>
+                          <th className="py-3 px-3 text-right">Latency (Avg / Med)</th>
+                          <th className="py-3 px-3 text-right">Tokens</th>
+                          <th className="py-3 px-3 text-right">Cost / Q</th>
+                          <th className="py-3 px-3 text-right">Total Cost</th>
+                          <th className="py-3 px-3.5 text-center">Pareto Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-dark-800 font-mono">
+                        {comparisonModelList.map((m) => {
+                          const scorableStr =
+                            m.scorable_accuracy !== null && m.scorable_accuracy !== undefined
+                              ? `${(m.scorable_accuracy * 100).toFixed(1)}%`
+                              : 'N/A';
+                          const e2eStr =
+                            m.end_to_end_accuracy !== null && m.end_to_end_accuracy !== undefined
+                              ? `${(m.end_to_end_accuracy * 100).toFixed(1)}%`
+                              : 'N/A';
+                          const costQStr =
+                            m.cost_per_question_usd !== null && m.cost_per_question_usd !== undefined
+                              ? `$${m.cost_per_question_usd.toFixed(4)}`
+                              : null;
+                          const totalCostStr =
+                            m.total_cost_usd !== null && m.total_cost_usd !== undefined
+                              ? `$${m.total_cost_usd.toFixed(4)}`
+                              : null;
+
+                          return (
+                            <tr key={m.model_id} className="hover:bg-dark-800/40 transition-colors">
+                              <td className="py-3 px-3.5">
+                                <div className="font-sans font-medium text-slate-100 flex items-center gap-1.5">
+                                  {m.display_name}
+                                </div>
+                                <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+                                  <span>{m.provider_type}</span>
+                                  <span>•</span>
+                                  <span className="text-slate-300">{m.provider_model_id}</span>
+                                </div>
+                              </td>
+
+                              <td className="py-3 px-3 text-center text-slate-300">
+                                {m.attempted_questions} <span className="text-slate-500 text-[10px]">({m.successful_generations} ok)</span>
+                              </td>
+
+                              <td className="py-3 px-3 text-center">
+                                <div className="flex items-center justify-center gap-1.5 text-xs">
+                                  <span className="text-emerald-400 font-semibold" title="Correct answers">
+                                    {m.correct_answers}
+                                  </span>
+                                  <span className="text-slate-600">/</span>
+                                  <span className="text-red-400" title="Incorrect answers">
+                                    {m.incorrect_answers}
+                                  </span>
+                                  <span className="text-slate-600">/</span>
+                                  <span className="text-amber-400" title="Unparseable answers">
+                                    {m.unparseable_answers}
+                                  </span>
+                                  <span className="text-slate-600">/</span>
+                                  <span className="text-rose-500" title="Failed requests">
+                                    {m.failed_requests}
+                                  </span>
+                                </div>
+                              </td>
+
+                              <td className="py-3 px-3 text-right">
+                                <span
+                                  className={`px-1.5 py-0.5 rounded font-semibold text-xs ${
+                                    m.scorable_accuracy !== null && m.scorable_accuracy !== undefined && m.scorable_accuracy >= 0.7
+                                      ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60'
+                                      : m.scorable_accuracy !== null && m.scorable_accuracy !== undefined && m.scorable_accuracy >= 0.4
+                                      ? 'bg-amber-950/60 text-amber-300 border border-amber-800/60'
+                                      : 'bg-dark-800 text-slate-300'
+                                  }`}
+                                  title="Scorable Accuracy = Correct / (Correct + Incorrect)"
+                                >
+                                  {scorableStr}
+                                </span>
+                              </td>
+
+                              <td className="py-3 px-3 text-right text-slate-300" title="End-to-End Rate = Correct / Attempted">
+                                {e2eStr}
+                              </td>
+
+                              <td className="py-3 px-3 text-right text-slate-300 text-[11px]">
+                                {m.avg_latency_ms !== null && m.avg_latency_ms !== undefined ? (
+                                  <>
+                                    <span>{Math.round(m.avg_latency_ms)}ms</span>
+                                    <span className="text-slate-500 mx-1">/</span>
+                                    <span>{m.median_latency_ms !== null && m.median_latency_ms !== undefined ? `${Math.round(m.median_latency_ms)}ms` : '-'}</span>
+                                  </>
+                                ) : (
+                                  <span className="text-slate-500 italic">Unavailable</span>
+                                )}
+                              </td>
+
+                              <td className="py-3 px-3 text-right text-slate-300 text-[11px]">
+                                <div>{(m.total_tokens || 0).toLocaleString()}</div>
+                                <div className="text-[10px] text-slate-500 capitalize">
+                                  {m.token_provenance || 'unknown'}
+                                  {(m.missing_usage_count ?? 0) > 0 && (
+                                    <span className="text-amber-400 ml-1">({m.missing_usage_count} miss)</span>
+                                  )}
+                                </div>
+                              </td>
+
+                              <td className="py-3 px-3 text-right">
+                                {costQStr !== null ? (
+                                  <span className="text-slate-200">{costQStr}</span>
+                                ) : (
+                                  <span className="text-slate-500 italic text-[11px]">Unknown</span>
+                                )}
+                              </td>
+
+                              <td className="py-3 px-3 text-right">
+                                {totalCostStr !== null ? (
+                                  <span className="text-slate-200">{totalCostStr}</span>
+                                ) : (
+                                  <span className="text-slate-500 italic text-[11px]">Unknown</span>
+                                )}
+                                {(m.unknown_cost_count ?? 0) > 0 && (
+                                  <div className="text-[10px] text-amber-400/90">
+                                    {m.unknown_cost_count} unpriced
+                                  </div>
+                                )}
+                              </td>
+
+                              <td className="py-3 px-3.5 text-center">
+                                {m.is_pareto_efficient === true ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-semibold text-[10px]">
+                                    <Sparkles className="w-2.5 h-2.5" />
+                                    Pareto Frontier
+                                  </span>
+                                ) : m.is_pareto_efficient === false ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-dark-800 border border-dark-700 text-slate-400 text-[10px]">
+                                    Dominated
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px]">
+                                    Unpriced Tier
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+
+                    {/* Metric Definitions Footer */}
+                    <div className="p-3 border-t border-dark-800 bg-dark-850/40 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <strong>Scorable Acc:</strong> Correct / (Correct + Incorrect) •{' '}
+                        <strong>E2E Rate:</strong> Correct / Total Attempted •{' '}
+                        <strong>Pareto Frontier:</strong> Models where no alternative is simultaneously cheaper and more accurate.
+                      </div>
+                      <div className="text-slate-500">
+                        Zero, unknown and unavailable states are strictly distinguished.
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Section 2: Quality-vs-Cost Visualization & Pareto Frontier */}
+              <div className="dev-card p-5 border border-dark-800 space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-emerald-400" />
+                      Quality vs. Cost Trade-Off & Pareto Frontier
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Scorable Accuracy (%) plotted against Estimated Cost per Question (USD). Non-dominated models define the empirical Pareto frontier.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] text-slate-300">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50" />
+                      Pareto Efficient
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
+                      Dominated
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 border-b-2 border-emerald-400 border-dashed" />
+                      Frontier Curve
+                    </span>
+                  </div>
+                </div>
+
+                {/* SVG Scatter Plot Render */}
+                {(() => {
+                  const priced = comparisonModelList.filter(
+                    (m) =>
+                      m.cost_per_question_usd !== null &&
+                      m.cost_per_question_usd !== undefined &&
+                      m.scorable_accuracy !== null &&
+                      m.scorable_accuracy !== undefined
+                  );
+
+                  if (priced.length === 0) {
+                    return (
+                      <div className="p-8 rounded-xl bg-dark-850/80 border border-dark-750 text-center space-y-2">
+                        <Coins className="w-8 h-8 text-amber-400/80 mx-auto mb-1" />
+                        <h4 className="text-xs font-semibold text-slate-200">
+                          No Priced Cloud Models in Selected Benchmark Run
+                        </h4>
+                        <p className="text-xs text-slate-400 max-w-lg mx-auto leading-relaxed">
+                          All evaluated models in this run use local hardware compute or unpriced provider configurations. TokenPilot does not assign artificial $0.00 coordinates to preserve truthful cost comparisons. Quality metrics are available in the table above and detailed inspector below.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  const maxCost = Math.max(...priced.map((m) => m.cost_per_question_usd || 0), 0.001) * 1.25;
+                  const getX = (cost: number) => 60 + (cost / maxCost) * 500;
+                  const getY = (acc: number) => 25 + 210 - acc * 210;
+
+                  // Sort pareto points by cost ascending to draw frontier path
+                  const paretoPoints = priced
+                    .filter((m) => m.is_pareto_efficient === true)
+                    .sort((a, b) => (a.cost_per_question_usd || 0) - (b.cost_per_question_usd || 0));
+
+                  const paretoPathD = paretoPoints.length > 1
+                    ? paretoPoints
+                        .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${getX(p.cost_per_question_usd || 0)} ${getY(p.scorable_accuracy || 0)}`)
+                        .join(' ')
+                    : '';
+
+                  return (
+                    <div className="space-y-3">
+                      {priced.length === 1 && (
+                        <div className="p-2.5 rounded-lg bg-cyan-950/30 border border-cyan-800/40 text-xs text-cyan-300 flex items-center gap-2">
+                          <Info className="w-4 h-4 shrink-0" />
+                          <span>
+                            1 priced model evaluated ({priced[0].display_name}). Multi-model runs with at least 2 models will plot trade-off comparisons and the empirical Pareto frontier curve.
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="w-full overflow-x-auto bg-dark-950/60 rounded-xl border border-dark-800 p-2">
+                        <svg
+                          viewBox="0 0 600 280"
+                          className="w-full h-auto max-h-[320px] select-none text-[10px] font-mono"
+                        >
+                          {/* Grid lines & Y Axis Labels */}
+                          {[0, 0.25, 0.5, 0.75, 1.0].map((level) => {
+                            const y = getY(level);
+                            return (
+                              <g key={level}>
+                                <line x1="60" y1={y} x2="560" y2={y} stroke="#334155" strokeDasharray="3 3" opacity="0.4" />
+                                <text x="50" y={y + 3} textAnchor="end" fill="#94a3b8">
+                                  {Math.round(level * 100)}%
+                                </text>
+                              </g>
+                            );
+                          })}
+
+                          {/* X Axis Grid & Labels */}
+                          {[0, maxCost * 0.25, maxCost * 0.5, maxCost * 0.75, maxCost].map((cost, idx) => {
+                            const x = getX(cost);
+                            return (
+                              <g key={idx}>
+                                <line x1={x} y1="25" x2={x} y2="235" stroke="#334155" strokeDasharray="3 3" opacity="0.3" />
+                                <text x={x} y="250" textAnchor="middle" fill="#94a3b8">
+                                  ${cost.toFixed(4)}
+                                </text>
+                              </g>
+                            );
+                          })}
+
+                          {/* Axis Titles */}
+                          <text x="310" y="272" textAnchor="middle" fill="#cbd5e1" className="font-semibold font-sans text-[11px]">
+                            Estimated Cost per Question (USD)
+                          </text>
+                          <text
+                            transform="rotate(-90)"
+                            x="-130"
+                            y="18"
+                            textAnchor="middle"
+                            fill="#cbd5e1"
+                            className="font-semibold font-sans text-[11px]"
+                          >
+                            Scorable Accuracy (%)
+                          </text>
+
+                          {/* Pareto Frontier Line */}
+                          {paretoPathD && (
+                            <path
+                              d={paretoPathD}
+                              fill="none"
+                              stroke="#10b981"
+                              strokeWidth="2.5"
+                              strokeDasharray="4 2"
+                              opacity="0.9"
+                            />
+                          )}
+
+                          {/* Model Data Points */}
+                          {priced.map((m) => {
+                            const cx = getX(m.cost_per_question_usd || 0);
+                            const cy = getY(m.scorable_accuracy || 0);
+                            const isPareto = m.is_pareto_efficient === true;
+
+                            return (
+                              <g key={m.model_id} className="cursor-pointer group">
+                                {isPareto && (
+                                  <circle cx={cx} cy={cy} r="10" fill="#10b981" opacity="0.25" className="animate-pulse" />
+                                )}
+                                <circle
+                                  cx={cx}
+                                  cy={cy}
+                                  r={isPareto ? 6 : 5}
+                                  fill={isPareto ? '#10b981' : '#64748b'}
+                                  stroke={isPareto ? '#ecfdf5' : '#1e293b'}
+                                  strokeWidth="1.5"
+                                />
+                                <text
+                                  x={cx}
+                                  y={cy - 12}
+                                  textAnchor="middle"
+                                  fill={isPareto ? '#a7f3d0' : '#cbd5e1'}
+                                  className="font-sans font-semibold text-[10px]"
+                                >
+                                  {m.display_name}
+                                </text>
+                              </g>
+                            );
+                          })}
+                        </svg>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Local Compute / Unpriced Models Shelf */}
+                {(() => {
+                  const unpriced = comparisonModelList.filter(
+                    (m) => m.cost_per_question_usd === null || m.cost_per_question_usd === undefined
+                  );
+                  if (unpriced.length === 0) return null;
+
+                  return (
+                    <div className="p-4 rounded-xl bg-dark-850/50 border border-dark-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                          <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+                          Local Hardware & Unpriced Models (Excluded from Cost Axis)
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          {unpriced.length} model{unpriced.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                        {unpriced.map((m) => (
+                          <div
+                            key={m.model_id}
+                            className="p-3 rounded-lg bg-dark-900 border border-dark-750 flex items-center justify-between"
+                          >
+                            <div>
+                              <div className="text-xs font-medium text-slate-200">{m.display_name}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">
+                                {m.provider_type} • {m.provider_model_id}
+                              </div>
+                            </div>
+                            <div className="text-right font-mono">
+                              <div className="text-xs font-semibold text-cyan-300">
+                                {m.scorable_accuracy !== null && m.scorable_accuracy !== undefined
+                                  ? `${(m.scorable_accuracy * 100).toFixed(1)}%`
+                                  : 'N/A'}
+                              </div>
+                              <div className="text-[10px] text-slate-500">Scorable Acc</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Section 3: Detailed Model-Result Inspection */}
+              <div className="space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                      <Eye className="w-4 h-4 text-brand-400" />
+                      Detailed Model-Result Inspector
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Inspect verbatim model prompts, extracted answers, ground truth references, latency, and telemetry.
+                    </p>
+                  </div>
+
+                  {/* Filter Controls */}
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {/* Model filter */}
+                    <select
+                      value={comparisonFilterModel}
+                      onChange={(e) => setComparisonFilterModel(e.target.value)}
+                      className="bg-dark-850 border border-dark-750 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:border-brand-500 focus:outline-none"
+                    >
+                      <option value="all">All Models ({comparisonResults.length})</option>
+                      {selectedComparisonRun.model_configs?.map((cfg) => {
+                        const count = comparisonResults.filter((r) => r.model_id === cfg.model_id).length;
+                        return (
+                          <option key={cfg.model_id} value={cfg.model_id}>
+                            {cfg.display_name} ({count})
+                          </option>
+                        );
+                      })}
+                    </select>
+
+                    {/* Outcome filter */}
+                    <div className="flex items-center gap-1 bg-dark-850 border border-dark-750 rounded-lg p-0.5 text-xs">
+                      {[
+                        { id: 'all', label: 'All' },
+                        { id: 'correct', label: 'Correct', color: 'text-emerald-400' },
+                        { id: 'incorrect', label: 'Incorrect', color: 'text-red-400' },
+                        { id: 'unparseable', label: 'Unparseable', color: 'text-amber-400' },
+                        { id: 'failed', label: 'Failed', color: 'text-rose-400' },
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => setComparisonFilterOutcome(item.id)}
+                          className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+                            comparisonFilterOutcome === item.id
+                              ? 'bg-dark-700 text-slate-100 font-semibold'
+                              : 'text-slate-400 hover:text-slate-200'
+                          } ${item.color || ''}`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Search box */}
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search records..."
+                        value={comparisonSearchText}
+                        onChange={(e) => setComparisonSearchText(e.target.value)}
+                        className="bg-dark-850 border border-dark-750 text-slate-200 text-xs rounded-lg pl-8 pr-3 py-1.5 focus:border-brand-500 focus:outline-none w-44"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filtered records counter */}
+                <div className="text-xs text-slate-400 flex items-center justify-between">
+                  <span>
+                    Showing {filteredComparisonResults.length} of {comparisonResults.length} recorded evaluations
+                  </span>
+                  {comparisonLoading && (
+                    <span className="flex items-center gap-1.5 text-brand-400 text-xs">
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      Loading evaluation records...
+                    </span>
+                  )}
+                </div>
+
+                {/* Results List */}
+                {filteredComparisonResults.length === 0 ? (
+                  <div className="dev-card p-12 text-center border-dark-800">
+                    <p className="text-xs text-slate-400">
+                      No evaluation results match the active filter criteria.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {filteredComparisonResults.map((res) => {
+                      const status = res.evaluation_status || 'unevaluated';
+                      const isCorrect = status === 'correct';
+                      const isIncorrect = status === 'incorrect';
+                      const isUnparseable = status === 'unparseable';
+                      const isFailed = status === 'failed';
+
+                      return (
+                        <div
+                          key={res.id}
+                          className={`dev-card p-4 border transition-colors ${
+                            isCorrect
+                              ? 'border-emerald-900/60 bg-emerald-950/10'
+                              : isIncorrect
+                              ? 'border-red-900/60 bg-red-950/10'
+                              : isUnparseable
+                              ? 'border-amber-900/60 bg-amber-950/10'
+                              : isFailed
+                              ? 'border-rose-900/60 bg-rose-950/10'
+                              : 'border-dark-800'
+                          }`}
+                        >
+                          {/* Card Header */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-dark-800/80">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {/* Status Badge */}
+                              <span
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                                  isCorrect
+                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                    : isIncorrect
+                                    ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                                    : isUnparseable
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                    : isFailed
+                                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                    : 'bg-dark-800 text-slate-400'
+                                }`}
+                              >
+                                {isCorrect && <Check className="w-3 h-3 text-emerald-400" />}
+                                {isIncorrect && <XCircle className="w-3 h-3 text-red-400" />}
+                                {isUnparseable && <HelpCircle className="w-3 h-3 text-amber-400" />}
+                                {isFailed && <AlertCircle className="w-3 h-3 text-rose-400" />}
+                                <span className="uppercase text-[10px] tracking-wide">{status}</span>
+                              </span>
+
+                              {/* Model name & config */}
+                              <span className="text-xs font-semibold text-slate-100">
+                                {res.model_display_name}
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-400">
+                                ({res.provider_model_id})
+                              </span>
+
+                              <span className="text-slate-600">•</span>
+                              <span className="text-[11px] font-mono text-slate-400">
+                                Record: <strong className="text-slate-300">{res.record_id}</strong>
+                              </span>
+                            </div>
+
+                            {/* Telemetry metadata */}
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 font-mono">
+                              {res.latency_ms !== null && res.latency_ms !== undefined && (
+                                <span className="flex items-center gap-1" title="End-to-end latency">
+                                  <Clock className="w-3 h-3 text-slate-500" />
+                                  {res.latency_ms}ms
+                                </span>
+                              )}
+                              {res.ttft_ms !== null && res.ttft_ms !== undefined && (
+                                <span title="Time to first token">TTFT: {res.ttft_ms}ms</span>
+                              )}
+                              {res.total_tokens !== null && res.total_tokens !== undefined && (
+                                <span title="Prompt + completion tokens">
+                                  {res.total_tokens} toks ({res.token_provenance || 'unknown'})
+                                </span>
+                              )}
+                              {res.cost_usd !== null && res.cost_usd !== undefined ? (
+                                <span className="text-emerald-400/90" title="Estimated cost">
+                                  ${res.cost_usd.toFixed(5)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500 italic">Cost: Unknown</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Error Banner if any */}
+                          {res.error_message && (
+                            <div className="mt-3 p-2.5 rounded bg-rose-950/40 border border-rose-800/50 text-xs text-rose-300 flex items-start gap-2">
+                              <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+                              <span className="font-mono">{res.error_message}</span>
+                            </div>
+                          )}
+
+                          {/* Evaluation Answer Verification Box */}
+                          <div className="mt-3 p-3 rounded-lg bg-dark-900 border border-dark-800 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                            <div>
+                              <span className="text-[10px] uppercase font-semibold text-slate-400 block mb-0.5">
+                                Ground Truth Reference
+                              </span>
+                              <span className="font-mono font-semibold text-emerald-400 text-sm">
+                                {res.reference_answer || 'N/A'}
+                              </span>
+                            </div>
+
+                            <div>
+                              <span className="text-[10px] uppercase font-semibold text-slate-400 block mb-0.5">
+                                Extracted Model Answer
+                              </span>
+                              <span
+                                className={`font-mono font-semibold text-sm ${
+                                  isCorrect
+                                    ? 'text-emerald-400'
+                                    : isIncorrect
+                                    ? 'text-red-400'
+                                    : 'text-amber-400 italic'
+                                }`}
+                              >
+                                {res.extracted_answer || 'None (Unparseable)'}
+                              </span>
+                            </div>
+
+                            <div>
+                              <span className="text-[10px] uppercase font-semibold text-slate-400 block mb-0.5">
+                                Evaluation Method
+                              </span>
+                              <span className="text-slate-300 text-[11px]">
+                                {res.metric_name || 'exact_match_normalized'}
+                              </span>
+                              {res.evaluation_details?.reason && (
+                                <div className="text-[10px] text-slate-500 mt-0.5">
+                                  {res.evaluation_details.reason}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Question Prompt */}
+                          <div className="mt-3 space-y-1">
+                            <span className="text-[11px] font-semibold text-slate-300 block">
+                              Question Prompt:
+                            </span>
+                            <div className="p-2.5 rounded bg-dark-950/80 border border-dark-800 text-xs text-slate-200 whitespace-pre-wrap font-sans leading-relaxed">
+                              {res.prompt_text}
+                            </div>
+                          </div>
+
+                          {/* Verbatim Model Output */}
+                          {res.output_text && (
+                            <div className="mt-3 space-y-1">
+                              <span className="text-[11px] font-semibold text-slate-300 block">
+                                Verbatim Model Output:
+                              </span>
+                              <div className="p-2.5 rounded bg-dark-950/90 border border-dark-800 font-mono text-[11px] text-slate-300 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+                                {res.output_text}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}

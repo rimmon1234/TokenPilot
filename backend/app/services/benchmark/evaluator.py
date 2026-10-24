@@ -1,5 +1,6 @@
-"""GSM8K deterministic numerical answer evaluation service for TokenPilot (Milestone M4.2.2)."""
+"""GSM8K deterministic numerical answer evaluation service for TokenPilot (Milestone M4.2.2 & M4.2.3)."""
 import re
+import statistics
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Any
@@ -276,6 +277,48 @@ def evaluate_gsm8k_result(result: BenchmarkResult) -> BenchmarkResult:
     return result
 
 
+def calculate_pareto_frontier(
+    model_metrics: Dict[str, ModelScoringSummary]
+) -> Dict[str, Optional[bool]]:
+    """
+    Determine Pareto efficiency for evaluated models with known cost and quality.
+    A candidate Model B is dominated by Model A if:
+      Cost(A) <= Cost(B) and Quality(A) >= Quality(B)
+      with at least one strict inequality.
+    Models with unknown costs or missing accuracy are assigned None (cannot be placed on frontier).
+    Non-dominated models among valid candidates are Pareto efficient (True); dominated models are False.
+    """
+    pareto_map: Dict[str, Optional[bool]] = {}
+
+    # Identify models with valid quality and cost
+    eligible: List[Tuple[str, float, float]] = []
+    for m_id, m_summary in model_metrics.items():
+        quality = (
+            m_summary.scorable_accuracy
+            if m_summary.scorable_accuracy is not None
+            else m_summary.end_to_end_accuracy
+        )
+        cost = m_summary.cost_per_question_usd
+        if quality is not None and cost is not None:
+            eligible.append((m_id, float(cost), float(quality)))
+        else:
+            pareto_map[m_id] = None
+
+    for m_id, cost, quality in eligible:
+        dominated = False
+        for other_id, other_cost, other_quality in eligible:
+            if other_id == m_id:
+                continue
+            if (other_cost <= cost and other_quality >= quality) and (
+                other_cost < cost or other_quality > quality
+            ):
+                dominated = True
+                break
+        pareto_map[m_id] = not dominated
+
+    return pareto_map
+
+
 def calculate_benchmark_scores(
     run: BenchmarkRun, results: List[BenchmarkResult]
 ) -> Tuple[BenchmarkRun, List[BenchmarkResult]]:
@@ -320,11 +363,78 @@ def calculate_benchmark_scores(
         scorable_acc = round(correct / scorable_den, 4) if scorable_den > 0 else None
         e2e_acc = round(correct / attempted, 4) if attempted > 0 else None
 
-        display_name = display_names.get(model_id, model_res_list[0].model_display_name if model_res_list else model_id)
+        display_name = display_names.get(
+            model_id, model_res_list[0].model_display_name if model_res_list else model_id
+        )
+
+        # Latency statistics
+        latencies = [
+            r.latency_ms
+            for r in model_res_list
+            if r.status == "success" and r.latency_ms is not None
+        ]
+        avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else None
+        median_latency = (
+            round(float(statistics.median(latencies)), 2) if latencies else None
+        )
+
+        ttfts = [
+            r.ttft_ms for r in model_res_list if r.status == "success" and r.ttft_ms is not None
+        ]
+        avg_ttft = round(sum(ttfts) / len(ttfts), 2) if ttfts else None
+
+        # Token usage & provenance
+        prompt_tok_list = [r.prompt_tokens for r in model_res_list if r.prompt_tokens is not None]
+        comp_tok_list = [r.completion_tokens for r in model_res_list if r.completion_tokens is not None]
+        tot_tok_list = [r.total_tokens for r in model_res_list if r.total_tokens is not None]
+
+        tot_prompt = sum(prompt_tok_list) if prompt_tok_list else None
+        tot_comp = sum(comp_tok_list) if comp_tok_list else None
+        tot_tokens = sum(tot_tok_list) if tot_tok_list else None
+
+        missing_usage = sum(
+            1 for r in model_res_list if r.status == "success" and r.total_tokens is None
+        )
+
+        prov_set = {
+            r.token_provenance for r in model_res_list if r.status == "success" and r.token_provenance
+        }
+        if len(prov_set) == 1:
+            token_provenance = prov_set.pop()
+        elif len(prov_set) > 1:
+            token_provenance = "mixed"
+        else:
+            token_provenance = "unavailable"
+
+        # Cost accounting
+        costs = [
+            r.cost_usd for r in model_res_list if r.status == "success" and r.cost_usd is not None
+        ]
+        unknown_cost_count = sum(
+            1 for r in model_res_list if r.status == "success" and r.cost_usd is None
+        )
+
+        total_cost_usd = None
+        cost_per_q_usd = None
+        if unknown_cost_count == 0 and len(costs) == successful and successful > 0:
+            total_cost_usd = round(sum(costs), 6)
+            cost_per_q_usd = round(total_cost_usd / successful, 6)
+
+        # Model configs lookup
+        model_cfg = next((c for c in run.model_configs if c.model_id == model_id), None)
+        provider_type = model_cfg.provider_type if model_cfg else None
+        provider_model_id = (
+            model_cfg.provider_model_id
+            if model_cfg
+            else (model_res_list[0].provider_model_id if model_res_list else None)
+        )
+        pricing_source = model_cfg.pricing_source if model_cfg else None
 
         model_metrics[model_id] = ModelScoringSummary(
             model_id=model_id,
             display_name=display_name,
+            provider_type=provider_type,
+            provider_model_id=provider_model_id,
             attempted_questions=attempted,
             successful_generations=successful,
             correct_answers=correct,
@@ -334,6 +444,18 @@ def calculate_benchmark_scores(
             unevaluated_results=unevaluated,
             scorable_accuracy=scorable_acc,
             end_to_end_accuracy=e2e_acc,
+            avg_latency_ms=avg_latency,
+            median_latency_ms=median_latency,
+            avg_ttft_ms=avg_ttft,
+            total_prompt_tokens=tot_prompt,
+            total_completion_tokens=tot_comp,
+            total_tokens=tot_tokens,
+            token_provenance=token_provenance,
+            missing_usage_count=missing_usage,
+            total_cost_usd=total_cost_usd,
+            cost_per_question_usd=cost_per_q_usd,
+            unknown_cost_count=unknown_cost_count,
+            pricing_source=pricing_source,
         )
 
         total_attempted += attempted
@@ -343,6 +465,12 @@ def calculate_benchmark_scores(
         total_unparseable += unparseable
         total_failed += failed
         total_unevaluated += unevaluated
+
+    # Calculate Pareto frontier for evaluated models
+    pareto_results = calculate_pareto_frontier(model_metrics)
+    for m_id, is_pareto in pareto_results.items():
+        if m_id in model_metrics:
+            model_metrics[m_id].is_pareto_efficient = is_pareto
 
     overall_scorable_den = total_correct + total_incorrect
     overall_scorable_acc = (

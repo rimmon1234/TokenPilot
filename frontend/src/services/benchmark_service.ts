@@ -110,3 +110,42 @@ export async function scoreBenchmarkRun(runId: string): Promise<BenchmarkRun> {
   }
   return await res.json();
 }
+
+export async function exportBenchmarkRun(
+  runId: string,
+  format: 'json' | 'csv'
+): Promise<Blob> {
+  const url = `${API_BASE}/benchmarks/runs/${encodeURIComponent(runId)}/export?format=${format}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    let errorDetail = `Failed to export benchmark run (HTTP ${res.status})`;
+    try {
+      const errJson = await res.json();
+      if (errJson && errJson.detail) {
+        errorDetail = errJson.detail;
+      }
+    } catch {
+      // fallback
+    }
+    throw new Error(errorDetail);
+  }
+  return await res.blob();
+}
+
+export async function downloadBenchmarkReport(
+  runId: string,
+  format: 'json' | 'csv'
+): Promise<void> {
+  const blob = await exportBenchmarkRun(runId, format);
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `benchmark_report_${runId}.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+}
+

@@ -12,6 +12,7 @@ from app.services.benchmark.evaluator import (
     compare_gsm8k_answers,
     evaluate_gsm8k_result,
     calculate_benchmark_scores,
+    calculate_pareto_frontier,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "compare_gsm8k_answers",
     "evaluate_gsm8k_result",
     "calculate_benchmark_scores",
+    "calculate_pareto_frontier",
 ]

@@ -22,6 +22,8 @@ import {
   Clock,
   Coins,
   Check,
+  XCircle,
+  HelpCircle,
 } from 'lucide-react';
 import {
   DatasetTemplate,
@@ -46,6 +48,7 @@ import {
   fetchBenchmarkRun,
   fetchBenchmarkResults,
   cancelBenchmarkRun,
+  scoreBenchmarkRun,
 } from '../services/benchmark_service';
 import { workspaceRepo } from '../storage/indexeddb_repository';
 
@@ -101,6 +104,8 @@ export const BenchmarkLabPage: React.FC = () => {
   const [resultsModalData, setResultsModalData] = useState<BenchmarkResult[]>([]);
   const [resultsLoading, setResultsLoading] = useState<boolean>(false);
   const [resultsFilterText, setResultsFilterText] = useState<string>('');
+  const [resultsOutcomeFilter, setResultsOutcomeFilter] = useState<string>('all');
+  const [scoringRunId, setScoringRunId] = useState<string | null>(null);
 
   const loadData = async () => {
     setLoading(true);
@@ -391,6 +396,7 @@ export const BenchmarkLabPage: React.FC = () => {
     setResultsModalRun(run);
     setResultsLoading(true);
     setResultsFilterText('');
+    setResultsOutcomeFilter('all');
     try {
       const results = await fetchBenchmarkResults(run.id, 100, 0);
       setResultsModalData(results);
@@ -398,6 +404,27 @@ export const BenchmarkLabPage: React.FC = () => {
       setErrorBanner(`Failed to load benchmark results: ${err.message}`);
     } finally {
       setResultsLoading(false);
+    }
+  };
+
+  const handleScoreRun = async (runId: string) => {
+    setScoringRunId(runId);
+    try {
+      const updatedRun = await scoreBenchmarkRun(runId);
+      setBenchmarkRuns((prev) => prev.map((r) => (r.id === updatedRun.id ? updatedRun : r)));
+      if (activeRun && activeRun.id === updatedRun.id) {
+        setActiveRun(updatedRun);
+      }
+      if (resultsModalRun && resultsModalRun.id === updatedRun.id) {
+        setResultsModalRun(updatedRun);
+        const results = await fetchBenchmarkResults(updatedRun.id, 100, 0);
+        setResultsModalData(results);
+      }
+      setSuccessBanner(`Successfully evaluated and scored benchmark run '${runId}'!`);
+    } catch (err: any) {
+      setErrorBanner(`Failed to score benchmark run: ${err.message}`);
+    } finally {
+      setScoringRunId(null);
     }
   };
 
@@ -411,12 +438,19 @@ export const BenchmarkLabPage: React.FC = () => {
   });
 
   const filteredResults = resultsModalData.filter((res) => {
+    if (resultsOutcomeFilter !== 'all') {
+      const status = res.evaluation_status || 'unevaluated';
+      if (resultsOutcomeFilter !== status) {
+        return false;
+      }
+    }
     if (!resultsFilterText.trim()) return true;
     const term = resultsFilterText.toLowerCase();
     const promptText = res.prompt_text?.toLowerCase() || '';
     const outText = res.output_text?.toLowerCase() || '';
     const modelText = res.model_display_name?.toLowerCase() || '';
-    return promptText.includes(term) || outText.includes(term) || modelText.includes(term);
+    const ansText = res.extracted_answer?.toLowerCase() || '';
+    return promptText.includes(term) || outText.includes(term) || modelText.includes(term) || ansText.includes(term);
   });
 
   return (
@@ -691,6 +725,28 @@ export const BenchmarkLabPage: React.FC = () => {
                         <span>•</span>
                         <span>Started: {new Date(run.started_at).toLocaleTimeString()}</span>
                       </div>
+
+                      {/* Display scoring metrics if scored */}
+                      {run.results_summary?.scorable_accuracy !== undefined && run.results_summary?.scorable_accuracy !== null ? (
+                        <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-semibold flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            Scorable Acc: {(run.results_summary.scorable_accuracy * 100).toFixed(1)}%
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-semibold">
+                            E2E Rate: {run.results_summary.end_to_end_accuracy !== null ? `${(run.results_summary.end_to_end_accuracy * 100).toFixed(1)}%` : 'N/A'}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            ({run.results_summary.total_correct} correct, {run.results_summary.total_incorrect} incorrect, {run.results_summary.total_unparseable} unparseable)
+                          </span>
+                        </div>
+                      ) : (
+                        !isRunning && run.task_type === 'math_reasoning' && (
+                          <div className="text-[11px] text-slate-400 italic pt-0.5">
+                            Responses captured • Ready for GSM8K numerical scoring
+                          </div>
+                        )
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2 self-end md:self-center">
@@ -703,13 +759,29 @@ export const BenchmarkLabPage: React.FC = () => {
                           Cancel
                         </button>
                       ) : (
-                        <button
-                          onClick={() => handleOpenResultsModal(run)}
-                          className="dev-btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-slate-400" />
-                          View Results
-                        </button>
+                        <>
+                          {(isSuccess || isPartial) && run.task_type === 'math_reasoning' && (
+                            <button
+                              onClick={() => handleScoreRun(run.id)}
+                              disabled={scoringRunId === run.id}
+                              className="dev-btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5"
+                            >
+                              {scoringRunId === run.id ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Calculator className="w-3.5 h-3.5" />
+                              )}
+                              {run.results_summary?.evaluation_metric ? 'Re-Score' : 'Score Run'}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleOpenResultsModal(run)}
+                            className="dev-btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-slate-400" />
+                            View Results
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -1226,7 +1298,7 @@ export const BenchmarkLabPage: React.FC = () => {
                 </h3>
                 <span className="text-[11px] text-slate-400">
                   {resultsModalRun.dataset_name} • {resultsModalRun.model_ids.length} models •{' '}
-                  {resultsModalRun.results_summary?.total_evaluations || resultsModalData.length} evaluations
+                  {resultsModalRun.progress?.completed_items + resultsModalRun.progress?.failed_items || resultsModalData.length} evaluations
                 </span>
               </div>
               <button onClick={() => setResultsModalRun(null)} className="text-slate-400 hover:text-slate-200">
@@ -1234,21 +1306,123 @@ export const BenchmarkLabPage: React.FC = () => {
               </button>
             </div>
 
-            {/* Sub-header with search and notice */}
+            {/* Scoring Summary Bar */}
+            {resultsModalRun.results_summary?.scorable_accuracy !== undefined && resultsModalRun.results_summary?.scorable_accuracy !== null ? (
+              <div className="p-3 border-b border-dark-800 bg-emerald-950/20 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    Scorable Accuracy: {(resultsModalRun.results_summary.scorable_accuracy * 100).toFixed(1)}%
+                  </span>
+                  <span className="px-2.5 py-1 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
+                    E2E Correct Rate: {resultsModalRun.results_summary.end_to_end_accuracy !== null ? `${(resultsModalRun.results_summary.end_to_end_accuracy * 100).toFixed(1)}%` : 'N/A'}
+                  </span>
+                  <span className="text-[11px] text-slate-300 font-mono">
+                    Correct: <strong>{resultsModalRun.results_summary.total_correct}</strong> • Incorrect: <strong>{resultsModalRun.results_summary.total_incorrect}</strong> • Unparseable: <strong>{resultsModalRun.results_summary.total_unparseable}</strong> • Failed: <strong>{resultsModalRun.results_summary.total_failed}</strong>
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleScoreRun(resultsModalRun.id)}
+                  disabled={scoringRunId === resultsModalRun.id}
+                  className="dev-btn-secondary text-xs px-3 py-1 flex items-center gap-1.5"
+                >
+                  {scoringRunId === resultsModalRun.id ? (
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Calculator className="w-3.5 h-3.5" />
+                  )}
+                  Re-Score Run
+                </button>
+              </div>
+            ) : (
+              resultsModalRun.task_type === 'math_reasoning' && (
+                <div className="p-3 border-b border-dark-800 bg-amber-950/20 flex items-center justify-between gap-3 text-xs">
+                  <span className="text-amber-300 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5" />
+                    Model responses captured. Click Score Run to evaluate numerical answers against GSM8K ground truth.
+                  </span>
+                  <button
+                    onClick={() => handleScoreRun(resultsModalRun.id)}
+                    disabled={scoringRunId === resultsModalRun.id}
+                    className="dev-btn-primary text-xs px-3 py-1 flex items-center gap-1.5"
+                  >
+                    {scoringRunId === resultsModalRun.id ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Calculator className="w-3.5 h-3.5" />
+                    )}
+                    Score Run
+                  </button>
+                </div>
+              )
+            )}
+
+            {/* Sub-header with search and outcome filters */}
             <div className="p-3 border-b border-dark-800 bg-dark-850/50 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="relative flex-1 w-full sm:w-auto">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="Filter results by model, prompt, or response..."
+                  placeholder="Filter results by model, prompt, response, or extracted answer..."
                   value={resultsFilterText}
                   onChange={(e) => setResultsFilterText(e.target.value)}
                   className="w-full pl-8 pr-3 py-1 bg-dark-900 border border-dark-750 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-brand-500"
                 />
               </div>
-              <span className="text-[11px] text-amber-300 font-medium">
-                Note: Accuracy scoring will be calculated in Milestone M4.2.2.
-              </span>
+
+              {/* Outcome filter pills */}
+              <div className="flex items-center gap-1.5 self-start sm:self-auto overflow-x-auto text-[11px]">
+                <button
+                  onClick={() => setResultsOutcomeFilter('all')}
+                  className={`px-2 py-0.5 rounded transition-colors ${
+                    resultsOutcomeFilter === 'all'
+                      ? 'bg-brand-500/20 text-brand-300 font-semibold border border-brand-500/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  All ({resultsModalData.length})
+                </button>
+                <button
+                  onClick={() => setResultsOutcomeFilter('correct')}
+                  className={`px-2 py-0.5 rounded transition-colors ${
+                    resultsOutcomeFilter === 'correct'
+                      ? 'bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Correct ({resultsModalData.filter((r) => r.evaluation_status === 'correct').length})
+                </button>
+                <button
+                  onClick={() => setResultsOutcomeFilter('incorrect')}
+                  className={`px-2 py-0.5 rounded transition-colors ${
+                    resultsOutcomeFilter === 'incorrect'
+                      ? 'bg-rose-500/20 text-rose-300 font-semibold border border-rose-500/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Incorrect ({resultsModalData.filter((r) => r.evaluation_status === 'incorrect').length})
+                </button>
+                <button
+                  onClick={() => setResultsOutcomeFilter('unparseable')}
+                  className={`px-2 py-0.5 rounded transition-colors ${
+                    resultsOutcomeFilter === 'unparseable'
+                      ? 'bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Unparseable ({resultsModalData.filter((r) => r.evaluation_status === 'unparseable').length})
+                </button>
+                <button
+                  onClick={() => setResultsOutcomeFilter('failed')}
+                  className={`px-2 py-0.5 rounded transition-colors ${
+                    resultsOutcomeFilter === 'failed'
+                      ? 'bg-slate-700 text-slate-200 font-semibold border border-slate-600'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Failed ({resultsModalData.filter((r) => r.evaluation_status === 'failed').length})
+                </button>
+              </div>
             </div>
 
             {/* Results list */}
@@ -1259,89 +1433,128 @@ export const BenchmarkLabPage: React.FC = () => {
                   <span>Loading benchmark results...</span>
                 </div>
               ) : filteredResults.length === 0 ? (
-                <div className="py-12 text-center text-slate-400">No results found matching filter query.</div>
+                <div className="py-12 text-center text-slate-400">No results found matching filter criteria.</div>
               ) : (
-                filteredResults.map((res) => (
-                  <div
-                    key={res.id}
-                    className="p-3.5 rounded-xl bg-dark-850 border border-dark-800 space-y-2.5 hover:border-dark-750 transition-colors"
-                  >
-                    <div className="flex flex-wrap items-center justify-between text-[11px] pb-1.5 border-b border-dark-800">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-slate-100 flex items-center gap-1.5">
-                          <Cpu className="w-3.5 h-3.5 text-brand-400" />
-                          {res.model_display_name}
-                        </span>
-                        <span className="text-[10px] font-mono text-slate-400">({res.provider_model_id})</span>
-                        <span
-                          className={`text-[10px] px-2 py-0.5 rounded font-mono border ${
-                            res.status === 'success'
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                              : 'bg-red-500/10 text-red-400 border-red-500/20'
-                          }`}
-                        >
-                          {res.status.toUpperCase()}
-                        </span>
+                filteredResults.map((res) => {
+                  const evalStatus = res.evaluation_status || 'unevaluated';
+
+                  return (
+                    <div
+                      key={res.id}
+                      className="p-3.5 rounded-xl bg-dark-850 border border-dark-800 space-y-2.5 hover:border-dark-750 transition-colors"
+                    >
+                      <div className="flex flex-wrap items-center justify-between text-[11px] pb-1.5 border-b border-dark-800">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-slate-100 flex items-center gap-1.5">
+                            <Cpu className="w-3.5 h-3.5 text-brand-400" />
+                            {res.model_display_name}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-400">({res.provider_model_id})</span>
+
+                          {/* Evaluation Status Badge */}
+                          {evalStatus === 'correct' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              CORRECT (Score: 1.0)
+                            </span>
+                          )}
+                          {evalStatus === 'incorrect' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                              <XCircle className="w-3 h-3 text-rose-400" />
+                              INCORRECT (Score: 0.0)
+                            </span>
+                          )}
+                          {evalStatus === 'unparseable' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                              <HelpCircle className="w-3 h-3 text-amber-400" />
+                              UNPARSEABLE
+                            </span>
+                          )}
+                          {evalStatus === 'failed' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-slate-700 text-slate-300 border border-slate-600 flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3 text-slate-400" />
+                              FAILED INFERENCE
+                            </span>
+                          )}
+                          {evalStatus === 'unevaluated' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded font-mono bg-dark-800 text-slate-400 border border-dark-750">
+                              UNEVALUATED
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-3 text-[11px] text-slate-400 font-mono">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-cyan-400" />
+                            {Math.round(res.latency_ms)}ms
+                          </span>
+                          <span>•</span>
+                          <span>{res.total_tokens ?? '?'} tokens</span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1 text-emerald-400">
+                            <Coins className="w-3 h-3" />
+                            {res.cost_usd !== null && res.cost_usd !== undefined ? `$${res.cost_usd.toFixed(6)}` : 'unpriced'}
+                          </span>
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-3 text-[11px] text-slate-400 font-mono">
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-cyan-400" />
-                          {Math.round(res.latency_ms)}ms
+                      {/* Prompt */}
+                      <div>
+                        <span className="text-[10px] uppercase font-semibold text-slate-400 block mb-0.5">
+                          Benchmark Prompt:
                         </span>
-                        <span>•</span>
-                        <span>{res.total_tokens ?? '?'} tokens</span>
-                        <span>•</span>
-                        <span className="flex items-center gap-1 text-emerald-400">
-                          <Coins className="w-3 h-3" />
-                          {res.cost_usd !== null && res.cost_usd !== undefined ? `$${res.cost_usd.toFixed(6)}` : 'unpriced'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Prompt */}
-                    <div>
-                      <span className="text-[10px] uppercase font-semibold text-slate-400 block mb-0.5">
-                        Benchmark Prompt:
-                      </span>
-                      <pre className="p-2.5 rounded bg-dark-950 font-mono text-[11px] text-slate-200 whitespace-pre-wrap">
-                        {res.prompt_text}
-                      </pre>
-                    </div>
-
-                    {/* Model Output */}
-                    <div>
-                      <span className="text-[10px] uppercase font-semibold text-brand-300 block mb-0.5">
-                        Model Output Response:
-                      </span>
-                      {res.status === 'success' ? (
                         <pre className="p-2.5 rounded bg-dark-950 font-mono text-[11px] text-slate-200 whitespace-pre-wrap">
-                          {res.output_text || '(Empty output)'}
+                          {res.prompt_text}
                         </pre>
-                      ) : (
-                        <div className="p-2.5 rounded bg-red-950/30 border border-red-800/40 text-red-300 text-[11px]">
-                          <strong>Error:</strong> {res.error_message || 'Inference execution failed.'}
-                        </div>
-                      )}
-                    </div>
+                      </div>
 
-                    {/* Ground truth reference */}
-                    <div className="p-2.5 rounded bg-dark-900/80 border border-dark-800 text-[11px] space-y-1">
-                      <span className="text-[10px] uppercase font-semibold text-emerald-400 block">
-                        Reference Ground Truth:
-                      </span>
-                      <p className="text-slate-300 text-[11px] whitespace-pre-wrap">{res.reference_answer}</p>
-                      {res.reference_metadata?.extracted_answer && (
-                        <div className="text-[11px] text-slate-300 pt-1 border-t border-dark-800/60">
-                          <span className="text-slate-400">Ground-Truth Target:</span>{' '}
-                          <strong className="text-cyan-300 font-mono">
-                            {res.reference_metadata.extracted_answer}
-                          </strong>
+                      {/* Model Output */}
+                      <div>
+                        <span className="text-[10px] uppercase font-semibold text-brand-300 block mb-0.5">
+                          Model Output Response:
+                        </span>
+                        {res.status === 'success' ? (
+                          <pre className="p-2.5 rounded bg-dark-950 font-mono text-[11px] text-slate-200 whitespace-pre-wrap">
+                            {res.output_text || '(Empty output)'}
+                          </pre>
+                        ) : (
+                          <div className="p-2.5 rounded bg-red-950/30 border border-red-800/40 text-red-300 text-[11px]">
+                            <strong>Error:</strong> {res.error_message || 'Inference execution failed.'}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Extracted Answer vs Ground Truth Comparison */}
+                      <div className="p-2.5 rounded bg-dark-900/90 border border-dark-800 text-[11px] space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-dark-800/80 pb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] uppercase font-semibold text-slate-400">Extracted Model Answer:</span>
+                            {res.extracted_answer !== undefined && res.extracted_answer !== null ? (
+                              <span className="font-mono font-bold text-amber-300 text-xs px-2 py-0.5 rounded bg-dark-950 border border-dark-750">
+                                {res.extracted_answer}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 italic">None (no numerical answer detected)</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] uppercase font-semibold text-slate-400">Canonical Ground-Truth Target:</span>
+                            <span className="font-mono font-bold text-cyan-300 text-xs px-2 py-0.5 rounded bg-dark-950 border border-dark-750">
+                              {res.reference_metadata?.extracted_answer || res.reference_answer}
+                            </span>
+                          </div>
                         </div>
-                      )}
+
+                        <div>
+                          <span className="text-[10px] uppercase font-semibold text-slate-400 block mb-0.5">
+                            Canonical Reference Solution:
+                          </span>
+                          <p className="text-slate-300 text-[11px] whitespace-pre-wrap">{res.reference_answer}</p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 

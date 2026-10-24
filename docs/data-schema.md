@@ -229,7 +229,40 @@ Reproducible ground-truth dataset schemas for offline benchmarking and ML router
   - `storage_path`: string (local file path to `.jsonl` lines)
   - `is_benchmarked`: boolean (always `false` upon import; updated upon M4.2 evaluation)
 
-### K. BenchmarkRun & BenchmarkResult (Evaluation Engine — M4.2.1)
+### K. BenchmarkRun & BenchmarkResult (Evaluation Engine — M4.2.1 & M4.2.2)
+
+#### `EvaluationOutcome` Enum
+- `correct`: Parsed candidate answer exactly matches canonical ground truth (`score = 1.0`).
+- `incorrect`: Parsed candidate answer differs from canonical ground truth (`score = 0.0`).
+- `unparseable`: Generation succeeded, but no confident numeric answer could be extracted (`score = 0.0`).
+- `failed`: Inference request timed out, threw an error, or was cancelled (`score = None`). Inference status is decoupled from math correctness.
+- `unevaluated`: Pre-scoring default status (`score = None`).
+
+#### `ModelScoringSummary` & `BenchmarkRunScoringSummary`
+Persisted inside `BenchmarkRun.results_summary`:
+- `evaluation_metric`: string (`'exact_match'`)
+- `evaluated_at`: datetime (ISO 8601)
+- `total_attempted`: integer (records × models)
+- `total_successful`: integer (successful inference generations)
+- `total_correct`: integer
+- `total_incorrect`: integer
+- `total_unparseable`: integer
+- `total_failed`: integer (inference failures)
+- `total_unevaluated`: integer
+- `scorable_accuracy`: float or null (`correct / (correct + incorrect)`; null if denominator is 0)
+- `end_to_end_accuracy`: float or null (`correct / attempted`; null if denominator is 0)
+- `model_metrics`: map of `model_id` to `ModelScoringSummary`:
+  - `model_id`: string
+  - `display_name`: string
+  - `attempted_questions`: integer
+  - `successful_generations`: integer
+  - `correct_answers`: integer
+  - `incorrect_answers`: integer
+  - `unparseable_answers`: integer
+  - `failed_requests`: integer
+  - `unevaluated_results`: integer
+  - `scorable_accuracy`: float or null
+  - `end_to_end_accuracy`: float or null
 
 #### `BenchmarkRun`
 Represents an empirical evaluation run against an imported dataset manifest across a set of workspace models.
@@ -251,7 +284,7 @@ Represents an empirical evaluation run against an imported dataset manifest acro
   - `started_at`: datetime
   - `completed_at`: optional datetime
   - `error_message`: optional string
-  - `results_summary`: dict
+  - `results_summary`: dict (populated with `BenchmarkRunScoringSummary` upon scoring)
 
 #### `BenchmarkResult`
 Canonical evaluation result record for an individual prompt executed against a specific model.
@@ -283,8 +316,11 @@ Canonical evaluation result record for an individual prompt executed against a s
   - `cost_usd`: optional float (calculated from verified tokens and pricing snapshot)
   - `error_message`: optional string
   - `error_category`: optional string (`timeout`, `rate_limit`, `auth_error`, `upstream_error`, `validation_error`)
-  - `score`: optional float (`null` in M4.2.1; evaluated in M4.2.2)
-  - `metric_name`: optional string
+  - `evaluation_status`: `EvaluationOutcome` (`'correct' | 'incorrect' | 'unparseable' | 'failed' | 'unevaluated'`)
+  - `extracted_answer`: optional string (normalized candidate number extracted from output text)
+  - `evaluation_details`: dict (evaluation metadata: matched pattern, clean candidate, clean target)
+  - `score`: optional float (`1.0` if correct, `0.0` if incorrect or unparseable, `None` if failed or unevaluated)
+  - `metric_name`: optional string (`'exact_match'`)
   - `created_at`: datetime
 
 ---

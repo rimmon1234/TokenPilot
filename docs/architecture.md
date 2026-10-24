@@ -362,6 +362,63 @@ flowchart TD
 4. **Decoupled Scoring Preparation**: In M4.2.1, model responses and reference answers are saved faithfully. Scores remain `null` / unevaluated; answer correctness is never inferred purely from an HTTP 200 status code. GSM8K numerical scoring is implemented in M4.2.2.
 5. **Non-blocking Resilience**: If an individual model times out or encounters a 429 rate limit, the runner records a failed `BenchmarkResult` with error taxonomy and continues evaluating the remaining models and prompts.
 
+---
+
+## 10. GSM8K Deterministic Evaluation & Scoring Subsystem (M4.2.2)
+
+Milestone M4.2.2 delivers deterministic mathematical evaluation for saved GSM8K benchmark responses in-process without making additional model provider API calls or using subjective LLM judges.
+
+```mermaid
+flowchart TD
+    subgraph UI ["Benchmark Lab Frontend"]
+        ScoreAction["Score / Re-Score Action Button"]
+        SummaryBanner["Run Scoring Summary (Acc, E2E, Counts)"]
+        OutcomeFilter["Outcome Filter Pills (Correct, Incorrect, Unparseable, Failed)"]
+        DiffCards["Result Cards (Candidate vs Reference Comparison)"]
+    end
+
+    subgraph API ["FastAPI Scoring Endpoint"]
+        ScoreEndpoint["POST /api/benchmarks/runs/{run_id}/score"]
+    end
+
+    subgraph ScoringEngine ["Evaluator Service (app.services.benchmark.evaluator)"]
+        RegexExtract["Multi-Priority Candidate Number Extractor"]
+        Normalizer["Decimal & Currency Normalizer"]
+        ExactMatch["Deterministic Exact Match Comparator"]
+        MetricsCalc["Accuracy Metrics Aggregator"]
+    end
+
+    subgraph Storage ["Atomic Persistence (app.services.benchmark.storage)"]
+        RunReader["Read .run.json & .results.jsonl"]
+        AtomicWriter["Atomic Write (.jsonl.tmp -> os.replace)"]
+        RunWriter["Atomic Update .run.json with results_summary"]
+    end
+
+    ScoreAction -->|Trigger Scoring| ScoreEndpoint
+    ScoreEndpoint -->|Load Saved Results| RunReader
+    RunReader -->|Unscored BenchmarkResults| RegexExtract
+    RegexExtract --> Normalizer
+    Normalizer --> ExactMatch
+    ExactMatch -->|Classified Outcomes| MetricsCalc
+    MetricsCalc -->|Scored BenchmarkResults| AtomicWriter
+    MetricsCalc -->|Scoring Summary| RunWriter
+    ScoreEndpoint -->|Return Updated BenchmarkRun| SummaryBanner
+    SummaryBanner --> OutcomeFilter
+    OutcomeFilter --> DiffCards
+```
+
+### Core Subsystem Invariants:
+1. **Zero Provider Re-Inference**: Scoring executes strictly in-process on existing persisted `BenchmarkResult` output text. No calls to local LLMs or external APIs are made.
+2. **Deterministic Extraction Hierarchy**: Prevents intermediate chain-of-thought contamination by evaluating high-specificity terminal markers first (`####`, `\boxed{}`, explicit final answer statements, concluding summary sentences, ending equations) before falling back to trailing lines. Responses without confident answers are classified as `unparseable`.
+3. **Decoupled Failure Semantics**: Infrastructure failures (timeout, connection refused, 401 auth error) are classified as `failed` (`score = None`), ensuring mathematical correctness statistics are not corrupted by network transport faults.
+4. **Standardized Metrics & Undefined Denominators**:
+   - $\text{Scorable Accuracy} = \frac{\text{correct}}{\text{correct} + \text{incorrect}}$
+   - $\text{End-to-End Correct-Answer Rate} = \frac{\text{correct}}{\text{attempted\_questions}}$
+   - When denominators are zero, values return `null` / `None` rather than deceptive zeros.
+5. **Atomic File Persistence**: Storage updates write to `.tmp` files and utilize atomic OS rename (`os.replace`) to ensure zero partial-write corruption upon crashes or cancellation.
+6. **Full Telemetry & Pricing Invariance**: Scoring updates only evaluation fields (`evaluation_status`, `extracted_answer`, `evaluation_details`, `score`, `metric_name`). It never modifies latency, TTFT, token counts, pricing snapshots, or costs.
+
+
 
 
 

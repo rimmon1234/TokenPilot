@@ -83,10 +83,14 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
   - Reliable lifecycle state machine (`pending`, `running`, `completed`, `completed_with_errors`, `failed`, `cancelled`).
   - Strict untrusted code execution guard rejecting HumanEval until sandboxed runtimes are available in M4.3+.
   - Benchmark Lab execution modal, active progress bar polling, and canonical results viewer.
-- **M4.2.2 — GSM8K Evaluation & Scoring** (Upcoming):
-  - Normalized mathematical ground-truth numeric extraction and comparison.
-  - Strict answer matching without hallucinated accuracy or assumption that HTTP success implies correct reasoning.
-  - Empirical evaluation scoring metrics (exact match accuracy, latency distributions, cost-per-correct-solution).
+- **M4.2.2 — GSM8K Evaluation & Scoring** (Completed):
+  - In-process deterministic scoring of saved GSM8K completions without additional LLM API calls or LLM judges.
+  - Multi-priority regex numerical answer extractor (`####`, `\boxed{}`, final answer phrases, concluding summary statements, concluding equations).
+  - Exact Decimal numerical comparison supporting negative numbers, decimals, currency symbols, and thousands commas.
+  - Explicit five-way outcome classification (`correct`, `incorrect`, `unparseable`, `failed`, `unevaluated`).
+  - Standardized metrics: Scorable Accuracy and End-to-End Correct-Answer Rate with explicit zero-denominator handling.
+  - Safe atomic file persistence (`.jsonl.tmp` and `os.replace`) and idempotent repeated scoring.
+  - Benchmark Lab UI scoring action, summary metrics banner, outcome filters, and candidate vs reference answer inspection.
 - **M4.2.3 — Benchmark Lab Results & Model Comparison UI** (Upcoming):
   - Multi-model comparison matrix, trade-off frontier curves (accuracy vs. cost vs. latency).
   - Exportable benchmark reports and model evaluation profiles.

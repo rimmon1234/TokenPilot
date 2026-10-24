@@ -7,7 +7,11 @@ from app.schemas.evaluation import (
     BenchmarkRun,
     BenchmarkResult,
 )
-from app.services.benchmark import benchmark_runner, benchmark_storage
+from app.services.benchmark import (
+    benchmark_runner,
+    benchmark_storage,
+    calculate_benchmark_scores,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,3 +87,47 @@ async def cancel_benchmark_run(run_id: str):
             detail=f"Benchmark run '{run_id}' not found or cannot be cancelled.",
         )
     return {"status": "cancelled", "run_id": run_id}
+
+
+@router.post("/runs/{run_id}/score", response_model=BenchmarkRun)
+async def score_benchmark_run(run_id: str):
+    """
+    Evaluate persisted benchmark responses against canonical ground-truth reference answers.
+    Operates strictly in-process and never makes external model API calls.
+    Updates BenchmarkResult scores and run results_summary metrics atomically.
+    """
+    run = benchmark_runner.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Benchmark run '{run_id}' not found.",
+        )
+
+    # Validate task compatibility (GSM8K math reasoning)
+    if run.task_type != "math_reasoning" and run.dataset_id.lower() != "gsm8k":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Run '{run_id}' has task_type '{run.task_type}' which is not compatible with GSM8K numerical scoring.",
+        )
+
+    if run.status in ["running", "pending"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot score an active benchmark run (current status: '{run.status}'). Wait for completion or cancel the run first.",
+        )
+
+    # Load all persisted results for this run
+    results = benchmark_storage.get_all_results(run_id)
+
+    # Score deterministically without calling any provider
+    updated_run, evaluated_results = calculate_benchmark_scores(run, results)
+
+    # Atomically persist evaluated results and updated run metadata
+    benchmark_storage.save_results_atomic(run_id, evaluated_results)
+    benchmark_storage.save_run(updated_run)
+
+    # Sync runner cache if present
+    if run_id in benchmark_runner._active_runs:
+        benchmark_runner._active_runs[run_id] = updated_run
+
+    return updated_run

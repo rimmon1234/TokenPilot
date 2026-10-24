@@ -64,6 +64,46 @@ class BenchmarkRunCreate(BaseModel):
     concurrency: int = Field(default=1, ge=1, le=4, description="Bounded concurrency (default 1 for safety).")
 
 
+class EvaluationOutcome(str, Enum):
+    """Evaluation outcome classification for a benchmark model response."""
+    CORRECT = "correct"
+    INCORRECT = "incorrect"
+    UNPARSEABLE = "unparseable"
+    FAILED = "failed"
+    UNEVALUATED = "unevaluated"
+
+
+class ModelScoringSummary(BaseModel):
+    """Scoring metrics for a single model within a benchmark run."""
+    model_id: str
+    display_name: str
+    attempted_questions: int = 0
+    successful_generations: int = 0
+    correct_answers: int = 0
+    incorrect_answers: int = 0
+    unparseable_answers: int = 0
+    failed_requests: int = 0
+    unevaluated_results: int = 0
+    scorable_accuracy: Optional[float] = None  # correct / (correct + incorrect)
+    end_to_end_accuracy: Optional[float] = None  # correct / attempted_questions
+
+
+class BenchmarkRunScoringSummary(BaseModel):
+    """Aggregate evaluation scoring summary across all models in a benchmark run."""
+    evaluation_metric: str = "exact_match"
+    evaluated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    total_attempted: int = 0
+    total_successful: int = 0
+    total_correct: int = 0
+    total_incorrect: int = 0
+    total_unparseable: int = 0
+    total_failed: int = 0
+    total_unevaluated: int = 0
+    scorable_accuracy: Optional[float] = None
+    end_to_end_accuracy: Optional[float] = None
+    model_metrics: Dict[str, ModelScoringSummary] = Field(default_factory=dict)
+
+
 class BenchmarkRun(BaseModel):
     """Entity representing a benchmark run configuration, lifecycle, and progress."""
     id: str
@@ -115,6 +155,9 @@ class BenchmarkResult(BaseModel):
     cost_usd: Optional[float] = None
     error_message: Optional[str] = None
     error_category: Optional[str] = None
-    score: Optional[float] = None  # None in M4.2.1; populated in M4.2.2 evaluation
+    evaluation_status: EvaluationOutcome = EvaluationOutcome.UNEVALUATED
+    extracted_answer: Optional[str] = None
+    evaluation_details: Dict[str, Any] = Field(default_factory=dict)
+    score: Optional[float] = None  # None if unevaluated/failed; 1.0 if correct; 0.0 if incorrect/unparseable
     metric_name: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

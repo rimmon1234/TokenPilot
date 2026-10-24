@@ -44,6 +44,9 @@ from app.schemas.evaluation import (
     BenchmarkRunCreate,
     BenchmarkRun,
     BenchmarkResult,
+    EvaluationOutcome,
+    ModelScoringSummary,
+    BenchmarkRunScoringSummary,
 )
 
 from app.schemas.gateway import (
@@ -107,6 +110,9 @@ __all__ = [
     "BenchmarkRunCreate",
     "BenchmarkRun",
     "BenchmarkResult",
+    "EvaluationOutcome",
+    "ModelScoringSummary",
+    "BenchmarkRunScoringSummary",
 
     "MessageRole",
     "ChatMessage",

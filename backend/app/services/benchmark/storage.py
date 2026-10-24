@@ -27,16 +27,47 @@ class BenchmarkStorageManager:
     def save_run(
         self, run: BenchmarkRun, results: Optional[List[BenchmarkResult]] = None
     ) -> None:
-        """Write run metadata and optional initial results to disk."""
+        """Write run metadata and optional initial results to disk atomically."""
+        import os
         run_file = self._run_path(run.id)
-        with open(run_file, "w", encoding="utf-8") as rf:
-            rf.write(run.model_dump_json(indent=2))
+        tmp_run = run_file.with_suffix(".json.tmp")
+        try:
+            with open(tmp_run, "w", encoding="utf-8") as rf:
+                rf.write(run.model_dump_json(indent=2))
+                rf.flush()
+                os.fsync(rf.fileno())
+            os.replace(tmp_run, run_file)
+        finally:
+            if tmp_run.exists():
+                try:
+                    tmp_run.unlink()
+                except OSError:
+                    pass
 
         if results is not None:
-            results_file = self._results_path(run.id)
-            with open(results_file, "w", encoding="utf-8") as res_f:
+            self.save_results_atomic(run.id, results)
+
+    def save_results_atomic(self, run_id: str, results: List[BenchmarkResult]) -> None:
+        """
+        Atomically persist all BenchmarkResult records for a run to prevent partial write corruption.
+        Writes to a temporary file first and replaces the target file via os.replace.
+        """
+        import os
+        results_file = self._results_path(run_id)
+        tmp_file = results_file.with_suffix(".jsonl.tmp")
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as res_f:
                 for res in results:
                     res_f.write(res.model_dump_json() + "\n")
+                res_f.flush()
+                os.fsync(res_f.fileno())
+            os.replace(tmp_file, results_file)
+        finally:
+            if tmp_file.exists():
+                try:
+                    tmp_file.unlink()
+                except OSError:
+                    pass
 
     def append_result(self, run_id: str, result: BenchmarkResult) -> None:
         """Append a single evaluated BenchmarkResult record to the run's .results.jsonl file."""
@@ -101,6 +132,26 @@ class BenchmarkStorageManager:
                 current_idx += 1
                 if current_idx >= target_end:
                     break
+
+        return results
+
+    def get_all_results(self, run_id: str) -> List[BenchmarkResult]:
+        """Read all canonical benchmark evaluation results for a run."""
+        results_file = self._results_path(run_id)
+        if not results_file.exists():
+            return []
+
+        results: List[BenchmarkResult] = []
+        with open(results_file, "r", encoding="utf-8") as rf:
+            for idx, line in enumerate(rf):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    res_dict = json.loads(line)
+                    results.append(BenchmarkResult.model_validate(res_dict))
+                except Exception as err:
+                    logger.warning("Failed parsing benchmark result line %d: %s", idx, err)
 
         return results
 

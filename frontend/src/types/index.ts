@@ -412,6 +412,42 @@ export interface BenchmarkRunCreate {
   concurrency?: number;
 }
 
+export type EvaluationOutcome =
+  | 'correct'
+  | 'incorrect'
+  | 'unparseable'
+  | 'failed'
+  | 'unevaluated';
+
+export interface ModelScoringSummary {
+  model_id: string;
+  display_name: string;
+  attempted_questions: number;
+  successful_generations: number;
+  correct_answers: number;
+  incorrect_answers: number;
+  unparseable_answers: number;
+  failed_requests: number;
+  unevaluated_results: number;
+  scorable_accuracy?: number | null;
+  end_to_end_accuracy?: number | null;
+}
+
+export interface BenchmarkRunScoringSummary {
+  evaluation_metric: string;
+  evaluated_at: string;
+  total_attempted: number;
+  total_successful: number;
+  total_correct: number;
+  total_incorrect: number;
+  total_unparseable: number;
+  total_failed: number;
+  total_unevaluated: number;
+  scorable_accuracy?: number | null;
+  end_to_end_accuracy?: number | null;
+  model_metrics: Record<string, ModelScoringSummary>;
+}
+
 export interface BenchmarkRun {
   id: string;
   dataset_manifest_id: string;
@@ -461,6 +497,9 @@ export interface BenchmarkResult {
   cost_usd?: number | null;
   error_message?: string | null;
   error_category?: string | null;
+  evaluation_status?: EvaluationOutcome;
+  extracted_answer?: string | null;
+  evaluation_details?: Record<string, any>;
   score?: number | null;
   metric_name?: string | null;
   created_at: string;

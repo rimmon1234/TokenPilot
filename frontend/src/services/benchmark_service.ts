@@ -91,3 +91,22 @@ export async function cancelBenchmarkRun(runId: string): Promise<BenchmarkRun> {
   }
   return await res.json();
 }
+
+export async function scoreBenchmarkRun(runId: string): Promise<BenchmarkRun> {
+  const res = await fetch(`${API_BASE}/benchmarks/runs/${encodeURIComponent(runId)}/score`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    let errorDetail = `Failed to score benchmark run (HTTP ${res.status})`;
+    try {
+      const errJson = await res.json();
+      if (errJson && errJson.detail) {
+        errorDetail = errJson.detail;
+      }
+    } catch {
+      // fallback
+    }
+    throw new Error(errorDetail);
+  }
+  return await res.json();
+}

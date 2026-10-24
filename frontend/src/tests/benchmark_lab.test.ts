@@ -5,12 +5,14 @@ import {
   fetchBenchmarkRun,
   fetchBenchmarkResults,
   cancelBenchmarkRun,
+  scoreBenchmarkRun,
 } from '../services/benchmark_service';
 import {
   BenchmarkRun,
   BenchmarkResult,
   BenchmarkRunCreate,
   BenchmarkModelConfig,
+  BenchmarkRunScoringSummary,
 } from '../types';
 
 describe('Benchmark Execution Service Client', () => {
@@ -191,4 +193,69 @@ describe('Benchmark Execution Service Client', () => {
       expect.objectContaining({ method: 'POST' })
     );
   });
+
+  it('scoreBenchmarkRun triggers scoring and returns run with scoring summary', async () => {
+    const mockSummary: BenchmarkRunScoringSummary = {
+      evaluation_metric: 'exact_match',
+      evaluated_at: new Date().toISOString(),
+      total_attempted: 1,
+      total_successful: 1,
+      total_correct: 1,
+      total_incorrect: 0,
+      total_unparseable: 0,
+      total_failed: 0,
+      total_unevaluated: 0,
+      scorable_accuracy: 1.0,
+      end_to_end_accuracy: 1.0,
+      model_metrics: {
+        'local-llama3': {
+          model_id: 'local-llama3',
+          display_name: 'Llama 3 8B',
+          attempted_questions: 1,
+          successful_generations: 1,
+          correct_answers: 1,
+          incorrect_answers: 0,
+          unparseable_answers: 0,
+          failed_requests: 0,
+          unevaluated_results: 0,
+          scorable_accuracy: 1.0,
+          end_to_end_accuracy: 1.0,
+        },
+      },
+    };
+
+    const scoredRun: BenchmarkRun = {
+      ...mockRun,
+      status: 'completed',
+      results_summary: mockSummary as unknown as Record<string, unknown>,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => scoredRun,
+    } as Response);
+
+    const result = await scoreBenchmarkRun('run-gsm8k-12345678');
+    expect(result.id).toBe('run-gsm8k-12345678');
+    expect(result.results_summary?.total_correct).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/benchmarks/runs/run-gsm8k-12345678/score'),
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('scoreBenchmarkRun throws descriptive error on 422 incompatibility', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        detail: 'Task type code_generation does not support GSM8K scoring.',
+      }),
+    } as Response);
+
+    await expect(scoreBenchmarkRun('run-humaneval-123')).rejects.toThrow(
+      'does not support GSM8K scoring'
+    );
+  });
 });
+

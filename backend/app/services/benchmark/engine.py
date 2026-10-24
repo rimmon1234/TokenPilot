@@ -36,6 +36,7 @@ class BenchmarkRunner:
         # In-memory tracking of active runs and cancellation signals
         self._active_runs: Dict[str, BenchmarkRun] = {}
         self._cancel_events: Dict[str, asyncio.Event] = {}
+        self._active_tasks: Dict[str, asyncio.Task] = {}
 
     def validate_run_request(self, request: BenchmarkRunCreate) -> tuple[Any, List[DatasetRecord]]:
         """
@@ -133,7 +134,7 @@ class BenchmarkRunner:
         self._cancel_events[run_id] = asyncio.Event()
 
         # Launch evaluation loop in background
-        asyncio.create_task(
+        task = asyncio.create_task(
             self._execute_evaluation_loop(
                 run_id=run_id,
                 manifest=manifest,
@@ -142,8 +143,19 @@ class BenchmarkRunner:
                 settings=request.generation_settings,
             )
         )
+        self._active_tasks[run_id] = task
 
         return run
+
+    async def wait_for_run(self, run_id: str, timeout: float = 10.0) -> Optional[BenchmarkRun]:
+        """Await completion of a benchmark background run task."""
+        task = self._active_tasks.get(run_id)
+        if task:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            except Exception:
+                pass
+        return self.get_run(run_id)
 
     async def _execute_evaluation_loop(
         self,

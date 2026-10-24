@@ -139,3 +139,89 @@ def test_get_nonexistent_run():
 def test_cancel_nonexistent_run():
     res = client.post("/api/benchmarks/runs/run-nonexistent/cancel")
     assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_score_benchmark_run_success():
+    # Record 2 sampled by seed 42 has reference answer 70000
+    mock_inference = AsyncMock(
+        return_value=InternalInferenceResult(
+            success=True,
+            output_text="After calculating, the final answer is 70,000.",
+            prompt_tokens=25,
+            completion_tokens=10,
+            total_tokens=35,
+            latency_ms=150.0,
+        )
+    )
+
+    payload = {
+        "dataset_manifest_id": "ds-test-benchmark-gsm8k",
+        "models": [
+            {
+                "model_id": "ollama-test-score",
+                "display_name": "Llama 3.2 3B",
+                "provider_type": "ollama",
+                "execution_mode": "local_openai_compatible",
+                "provider_model_id": "llama3.2:3b",
+                "base_url": "http://localhost:11434/v1",
+            }
+        ],
+        "subset_size": 1,
+        "seed": 42,
+    }
+
+    with patch("app.services.benchmark.engine.execute_internal_inference", mock_inference):
+        res = client.post("/api/benchmarks/runs", json=payload)
+        assert res.status_code == 201
+        run_id = res.json()["id"]
+
+        from app.services.benchmark import benchmark_runner
+        await benchmark_runner.wait_for_run(run_id)
+
+    # Call score endpoint (outside patch, verifying scoring never calls inference)
+    score_res = client.post(f"/api/benchmarks/runs/{run_id}/score")
+    assert score_res.status_code == 200
+    scored_data = score_res.json()
+    assert scored_data["results_summary"]["evaluation_metric"] == "exact_match"
+    assert scored_data["results_summary"]["total_correct"] == 1
+    assert scored_data["results_summary"]["scorable_accuracy"] == 1.0
+
+    # Query updated results
+    results_res = client.get(f"/api/benchmarks/runs/{run_id}/results")
+    assert results_res.status_code == 200
+    res_list = results_res.json()
+    assert len(res_list) == 1
+    assert res_list[0]["evaluation_status"] == "correct"
+    assert res_list[0]["score"] == 1.0
+    assert res_list[0]["extracted_answer"] == "70000"
+
+
+def test_score_benchmark_run_404():
+    res = client.post("/api/benchmarks/runs/run-not-found-xyz/score")
+    assert res.status_code == 404
+
+
+def test_score_benchmark_run_unsupported_task():
+    from app.services.benchmark.storage import benchmark_storage
+    from app.schemas.evaluation import BenchmarkRun, BenchmarkRunStatus
+
+    run = BenchmarkRun(
+        id="run-humaneval-dummy",
+        dataset_manifest_id="ds-he",
+        dataset_name="HumanEval",
+        dataset_id="humaneval",
+        dataset_revision="rev",
+        source_split="test",
+        task_type=TaskType.CODE_GENERATION,
+        model_ids=["m1"],
+        status=BenchmarkRunStatus.COMPLETED,
+    )
+    benchmark_storage.save_run(run)
+
+    try:
+        res = client.post(f"/api/benchmarks/runs/{run.id}/score")
+        assert res.status_code == 422
+        assert "not compatible with GSM8K" in res.json()["detail"]
+    finally:
+        benchmark_storage.delete_run(run.id)

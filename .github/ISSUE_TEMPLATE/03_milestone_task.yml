@@ -1,0 +1,29 @@
+name: Milestone Task
+description: Track development progress on roadmap milestones (M0-M8)
+title: "[Task]: "
+labels: ["milestone-task"]
+body:
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Milestone
+      description: Select which roadmap milestone this task belongs to.
+      options:
+        - M0 — Architecture, docs and repo setup
+        - M1 — Frontend/backend skeleton and core contracts
+        - M2 — Model Studio, HF discovery, custom config & routing pools
+        - M3 — Direct model calls, credentials, history & usage
+        - M4 — Dataset construction, benchmarking & labels
+        - M5 — Supervised ML router training & saved artifacts
+        - M6 — Automatic routing, constraints, analytics & savings
+        - M7 — Auth, sessions, cloud sync & encrypted credentials
+        - M8 — Testing, security hardening & release
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: List specific criteria required to consider this task complete.
+    validations:
+      required: true

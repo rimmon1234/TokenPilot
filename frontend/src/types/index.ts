@@ -422,6 +422,8 @@ export type EvaluationOutcome =
 export interface ModelScoringSummary {
   model_id: string;
   display_name: string;
+  provider_type?: string | null;
+  provider_model_id?: string | null;
   attempted_questions: number;
   successful_generations: number;
   correct_answers: number;
@@ -431,6 +433,19 @@ export interface ModelScoringSummary {
   unevaluated_results: number;
   scorable_accuracy?: number | null;
   end_to_end_accuracy?: number | null;
+  avg_latency_ms?: number | null;
+  median_latency_ms?: number | null;
+  avg_ttft_ms?: number | null;
+  total_prompt_tokens?: number | null;
+  total_completion_tokens?: number | null;
+  total_tokens?: number | null;
+  token_provenance?: string;
+  missing_usage_count?: number;
+  total_cost_usd?: number | null;
+  cost_per_question_usd?: number | null;
+  unknown_cost_count?: number;
+  pricing_source?: string | null;
+  is_pareto_efficient?: boolean | null;
 }
 
 export interface BenchmarkRunScoringSummary {

@@ -1,4 +1,10 @@
-import { HFSearchResponse, ModelTemplate, WorkspaceModel } from '../types';
+import {
+  HFSearchResponse,
+  ModelTemplate,
+  WorkspaceModel,
+  ConnectionTestRequest,
+  ConnectionTestResult,
+} from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
@@ -85,3 +91,21 @@ export async function validateModelConfig(modelData: Partial<WorkspaceModel>): P
     return { valid: true, message: 'Local client validation used.' };
   }
 }
+
+export async function testModelConnection(
+  request: ConnectionTestRequest
+): Promise<ConnectionTestResult> {
+  const res = await fetch(`${API_BASE}/models/test-connection`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    throw new Error(errData?.detail?.[0]?.msg || errData?.message || `Test failed with HTTP ${res.status}`);
+  }
+
+  return await res.json();
+}
+

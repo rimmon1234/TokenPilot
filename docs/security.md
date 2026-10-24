@@ -37,3 +37,31 @@ flowchart TD
 - **Per-Tenant Encryption**: Master keys managed via environment KMS, encrypting individual credentials using user-specific salt and AES-256-GCM.
 - **Key Revocation & Audit**: Audit log of when credentials were exchanged for upstream inference calls.
 - **Data Export & Right to be Forgotten**: Endpoints allowing one-click JSON export of all workspace models, pools, and prompt metrics, or full irreversible purge.
+
+---
+
+## 4. Server-Side Request Forgery (SSRF) & Connection Testing Security
+
+Milestone M3.1 introduces model connection testing (`POST /api/models/test-connection`). To prevent the gateway from becoming an open proxy or SSRF vector, outbound network testing enforces strict controls:
+
+### SSRF Protection Rules (`app.core.network_validator`):
+1. **Scheme Restrictions**: Only `http://` and `https://` schemes are permitted. Schemes such as `file://`, `gopher://`, `ftp://`, or `dict://` are rejected immediately.
+2. **DNS Resolution & IP Validation**: All hostnames are resolved via DNS to their underlying IPv4/IPv6 addresses before requests are made.
+3. **Cloud Metadata Protection (Unconditional)**:
+   - Requests to link-local cloud metadata endpoints (e.g., `169.254.169.254`, `metadata.google.internal`) are unconditionally blocked.
+   - This prevents exfiltration of IAM instance profiles, Google Workload Identity credentials, or container tokens, regardless of environment settings.
+4. **Private Network Boundaries**:
+   - Loopback (`127.0.0.0/8`, `::1`) and private RFC 1918 subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) are blocked in production mode.
+   - In local development mode (`ENVIRONMENT=development` and `ALLOW_LOCAL_NETWORK_TESTS=True`), loopback and local LAN endpoints are explicitly permitted to support local runtimes like Ollama, LM Studio, and local vLLM.
+5. **Local vs. Hosted Backend Architecture**:
+   - *Local Backend*: When TokenPilot runs on the user's workstation (`localhost:8000`), it shares the network namespace with local runtimes (e.g. `http://localhost:11434` for Ollama).
+   - *Cloud-Hosted Backend*: When TokenPilot is deployed to cloud infrastructure (e.g., Kubernetes, Cloud Run, AWS ECS), the remote server cannot reach `localhost:11434` on the user's laptop. Users connecting local models to a hosted gateway must expose their runtime through an encrypted tunnel (e.g., Cloudflare Tunnels, Tailscale) with a public or VPC URL.
+6. **Safe Redirect Handling**: Redirects must not bypass IP restrictions; redirected URLs undergo identical resolution and range checks.
+7. **Timeout and Size Limits**: Probes enforce an 8.0-second socket timeout to prevent Slowloris resource exhaustion.
+
+### Transient Credential Handling:
+- Test tokens provided in connection requests are modeled using Pydantic's `SecretStr`.
+- Secrets are held only in memory during the asynchronous execution of the test probe.
+- Upstream `Authorization` headers, raw error traces, and API keys are redacted from logs and stripped from API responses.
+- The browser interface stores only sanitized diagnostic metadata (latency, status, timestamp) in IndexedDB; the test token is never persisted.
+

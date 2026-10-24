@@ -91,3 +91,45 @@ To ensure local privacy and frictionless offline-first onboarding, nonsecret wor
 - Gracefully handles offline or network-blocked environments with user retry options.
 - Strictly flags verified properties (license, context length, gated model status) versus unverified claims.
 - Never downloads large model weights during search or model configuration.
+
+---
+
+## 5. Model Connection Testing & Diagnostics Subsystem (M3.1)
+
+Milestone M3.1 delivers pre-flight diagnostics and connection testing for user-configured models without initiating billable completion queries.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer (UI)
+    participant Modal as TestConnectionModal
+    participant IDB as IndexedDB
+    participant API as FastAPI Gateway
+    participant Val as NetworkValidator (SSRF)
+    participant Probe as ConnectionTester
+    participant Upstream as Target Endpoint / HF API
+
+    Dev->>Modal: Open Test Connection & Provide Transient Token
+    Modal->>API: POST /api/models/test-connection (SecretStr)
+    API->>Val: validate_outbound_url(base_url)
+    alt SSRF / Invalid IP / Blocked Metadata
+        Val-->>API: ValidationError (422)
+        API-->>Modal: Status: configuration_error
+    else Safe URL
+        Val-->>API: Sanitized URL
+        API->>Probe: probe_connection(config, secret)
+        Probe->>Upstream: Health / Catalog / whoami Request
+        Upstream-->>Probe: HTTP Response (Status, JSON / Error)
+        Probe-->>API: ConnectionTestResult (Latency, Reachable, Auth, Sanitized Msg)
+        API-->>Modal: 200 OK + ConnectionTestResult
+    end
+    Modal->>IDB: Update Model Diagnostic State (No Secrets Persisted)
+    Modal-->>Dev: Display Status Matrix & Diagnostics
+```
+
+### Architectural Highlights:
+- **Stateless Gateway Testing**: Works seamlessly with client-side IndexedDB persistence by accepting a nonsecret configuration payload and optional ephemeral token.
+- **SSRF Defense-in-Depth**: All candidate outbound endpoints undergo hostname DNS resolution, link-local metadata filtering (`169.254.169.254`), and environment-controlled LAN filtering before HTTP dispatch.
+- **Truthful Status Taxonomy**: Distinguishes `connected` (endpoint reachable and authenticated or catalog verified), `authentication_failed`, `unreachable`, `configuration_error`, and `unsupported` / inconclusive.
+- **Inference Verification Separation**: Non-generative catalog or health queries do not claim `inference_verified=true`; verification flags represent empirical reality rather than speculative assumptions.
+

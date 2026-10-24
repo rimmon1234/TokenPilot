@@ -39,6 +39,15 @@ export interface ModelTemplate {
   default_pool_hint?: string;
 }
 
+export type ConnectionTestStatus =
+  | 'connected'
+  | 'authentication_failed'
+  | 'unreachable'
+  | 'unsupported'
+  | 'configuration_error'
+  | 'inconclusive'
+  | 'untested';
+
 export interface WorkspaceModel {
   id: string;
   display_name: string;
@@ -61,9 +70,39 @@ export interface WorkspaceModel {
   enabled: boolean;
   evaluation_status: EvaluationStatus;
   assigned_pool_ids: string[];
+  connection_status?: ConnectionTestStatus;
+  last_tested_at?: string;
+  last_latency_ms?: number;
+  last_diagnostic_message?: string;
   created_at: string;
   updated_at: string;
 }
+
+export interface ConnectionTestRequest {
+  model_id?: string;
+  provider_type: string;
+  execution_mode: ExecutionMode;
+  provider_model_id: string;
+  huggingface_repo_id?: string;
+  base_url?: string;
+  transient_credential?: string;
+  provider_selection?: string;
+}
+
+export interface ConnectionTestResult {
+  status: ConnectionTestStatus;
+  provider_type: string;
+  sanitized_model_id: string;
+  endpoint_reachable?: boolean;
+  auth_status?: string;
+  inference_verified: boolean;
+  latency_ms?: number;
+  tested_at: string;
+  diagnostic_message: string;
+  retryable: boolean;
+  safe_details?: Record<string, any>;
+}
+
 
 export interface RoutingPool {
   id: string;

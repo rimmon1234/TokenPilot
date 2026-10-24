@@ -2,7 +2,16 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, SecretStr, field_validator
+
+
+class ConnectionTestStatus(str, Enum):
+    CONNECTED = "connected"
+    AUTHENTICATION_FAILED = "authentication_failed"
+    UNREACHABLE = "unreachable"
+    UNSUPPORTED = "unsupported"
+    CONFIGURATION_ERROR = "configuration_error"
+    INCONCLUSIVE = "inconclusive"
 
 
 class ExecutionMode(str, Enum):
@@ -87,6 +96,10 @@ class WorkspaceModelBase(BaseModel):
     enabled: bool = True
     evaluation_status: EvaluationStatus = EvaluationStatus.UNBENCHMARKED
     assigned_pool_ids: List[str] = Field(default_factory=list, description="IDs of pools model belongs to")
+    connection_status: Optional[ConnectionTestStatus] = None
+    last_tested_at: Optional[datetime] = None
+    last_latency_ms: Optional[float] = None
+    last_diagnostic_message: Optional[str] = None
 
 
 class WorkspaceModelCreate(WorkspaceModelBase):
@@ -110,6 +123,10 @@ class WorkspaceModelUpdate(BaseModel):
     enabled: Optional[bool] = None
     evaluation_status: Optional[EvaluationStatus] = None
     assigned_pool_ids: Optional[List[str]] = None
+    connection_status: Optional[ConnectionTestStatus] = None
+    last_tested_at: Optional[datetime] = None
+    last_latency_ms: Optional[float] = None
+    last_diagnostic_message: Optional[str] = None
 
 
 class WorkspaceModel(WorkspaceModelBase):
@@ -146,3 +163,37 @@ class HFSearchResponse(BaseModel):
     models: List[HuggingFaceDiscoveredModel]
     cached: bool = False
     error: Optional[str] = None
+
+
+class ConnectionTestRequest(BaseModel):
+    """Request schema for validating model endpoint connectivity and credentials."""
+    model_id: Optional[str] = Field(None, description="Optional local workspace model ID reference")
+    provider_type: str = Field(..., description="Provider identifier, e.g. ollama, vllm, huggingface, openai")
+    execution_mode: ExecutionMode
+    provider_model_id: str = Field(..., description="Target model ID or runtime tag")
+    huggingface_repo_id: Optional[str] = None
+    base_url: Optional[str] = None
+    transient_credential: Optional[SecretStr] = Field(
+        None,
+        description="Optional transient credential for this test only. Never persisted or written to logs."
+    )
+    provider_selection: Optional[str] = Field(None, description="Optional inference provider override")
+
+
+class ConnectionTestResult(BaseModel):
+    """Structured diagnostic result returned by connection test probe."""
+    status: ConnectionTestStatus
+    provider_type: str
+    sanitized_model_id: str
+    endpoint_reachable: Optional[bool] = None
+    auth_status: Optional[str] = Field(
+        None,
+        description="valid, invalid, not_required, untested, or missing"
+    )
+    inference_verified: bool = False
+    latency_ms: Optional[float] = None
+    tested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    diagnostic_message: str
+    retryable: bool = False
+    safe_details: Optional[Dict[str, Any]] = None
+

@@ -64,3 +64,21 @@ TokenPilot mandates absolute integrity in model metadata:
    - `output_price_per_million`: Cost in USD per 1M completion tokens.
    - `pricing_source`: Origin of pricing (e.g., `official_docs`, `user_override`, `free_local_tier`).
    - `pricing_verified_at`: ISO timestamp when pricing was confirmed.
+
+---
+
+## 4. Connection Testing & Diagnostics (Milestone M3.1)
+
+TokenPilot enables developers to actively test endpoint reachability and credentials before dispatching live queries:
+
+### Probe Architecture
+- **Endpoint**: `POST /api/models/test-connection`
+- **Zero-Secret Guarantee**: API keys and tokens are supplied in transient request memory (`pydantic.SecretStr`). Secrets are never written to database tables, logs, or persisted browser storage.
+- **Truth in Diagnostics**:
+  - **Endpoint Reachability**: Verifies that the TCP socket and HTTP service respond.
+  - **Authentication Status**: Verifies that upstream credentials are accepted (`valid`), rejected (`invalid`), or not needed (`not_required`).
+  - **Inference Verification**: A non-generative check (e.g., `/models` catalog probe or Hugging Face repository check) explicitly reports `inference_verified: false` to distinguish connectivity from full token generation (which is tested in M3.2).
+- **Local vs Remote Network Boundaries**:
+  - In local development mode, loopback (`localhost`, `127.0.0.1`) and local LAN addresses are permitted for local runtimes like Ollama and vLLM.
+  - Cloud instance metadata addresses (`169.254.169.254`) are strictly blocked across all environments.
+

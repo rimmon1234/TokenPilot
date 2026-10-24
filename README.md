@@ -95,8 +95,10 @@ npm run build
 
 - [x] **M0 — Architecture, Documentation & Repo Setup**
 - [x] **M1 — Frontend/Backend Skeleton & Core Contracts**
-- [x] **M2 — Model Studio, Hugging Face Discovery & Dynamic Pools** (Current)
+- [x] **M2 — Model Studio, Hugging Face Discovery & Dynamic Pools**
 - [ ] **M3 — Direct Gateway Execution, Credentials & Telemetry**
+  - [x] **M3.1 — Model Connection Testing & Diagnostics** (Current)
+  - [ ] **M3.2 — Chat Completion Gateway & Stream Telemetry**
 - [ ] **M4 — Evaluation Harness & Benchmark Datasets**
 - [ ] **M5 — Supervised ML Router Training**
 - [ ] **M6 — Automatic Routing & Cost Analytics**

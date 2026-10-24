@@ -13,6 +13,9 @@ from app.schemas.models import (
     WorkspaceModel,
     HuggingFaceDiscoveredModel,
     HFSearchResponse,
+    ConnectionTestStatus,
+    ConnectionTestRequest,
+    ConnectionTestResult,
 )
 from app.schemas.routing import (
     RoutingStrategy,
@@ -54,6 +57,9 @@ __all__ = [
     "WorkspaceModel",
     "HuggingFaceDiscoveredModel",
     "HFSearchResponse",
+    "ConnectionTestStatus",
+    "ConnectionTestRequest",
+    "ConnectionTestResult",
     "RoutingStrategy",
     "RoutingPoolBase",
     "RoutingPoolCreate",

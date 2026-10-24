@@ -290,5 +290,78 @@ graph TD
 4. **Git Boundary Protection**: Downloaded records and manifests reside in `data/datasets/` (gitignored), ensuring large data artifacts are never committed to the code repository. Small deterministic fixtures are maintained for unit tests.
 5. **Truthful Evaluation States**: Datasets in the registry are explicitly marked as `unbenchmarked` until empirical multi-model evaluation runs are executed in Milestone M4.2.
 
+---
+
+## 9. Multi-Model Benchmark Execution Engine (M4.2.1)
+
+Milestone M4.2.1 implements the multi-model execution engine that takes canonical imported prompts from M4.1 and runs them across configured workspace LLMs.
+
+### Execution Flow Architecture
+
+```mermaid
+flowchart TD
+    subgraph Frontend ["Benchmark Lab UI"]
+        RunModal["Run Benchmark Modal (Model Selection, Subsets, Params)"]
+        ActiveRunCard["Live Run Card (Polling & Progress Bar)"]
+        ResultsModal["Results Viewer Modal (Latency, Tokens, Cost)"]
+    end
+
+    subgraph BackendAPI ["FastAPI REST Endpoints"]
+        CreateRun["POST /api/benchmarks/runs"]
+        GetRuns["GET /api/benchmarks/runs"]
+        GetRunDetail["GET /api/benchmarks/runs/{id}"]
+        GetResults["GET /api/benchmarks/runs/{id}/results"]
+        CancelRun["POST /api/benchmarks/runs/{id}/cancel"]
+    end
+
+    subgraph ExecutionEngine ["Benchmark Execution Service"]
+        Runner["BenchmarkRunner (app.services.benchmark.engine)"]
+        JobMap[("In-Memory Active Runs Map")]
+        DatasetLoader["DatasetStorageManager (data/datasets/)"]
+        InternalRunner["execute_internal_inference (app.services.gateway.runner)"]
+        RunStorage["BenchmarkStorageManager (data/benchmark_runs/)"]
+    end
+
+    subgraph InferenceAdapters ["Gateway Adapters (In-Process)"]
+        OpenAIAdapter["OpenAICompatibleAdapter (Ollama, vLLM, LM Studio, Remote)"]
+        HFAdapter["HFInferenceProvidersAdapter (Hugging Face Router)"]
+    end
+
+    subgraph LLMProviders ["Target LLM Backends"]
+        LocalLLM[("Local Model Server (e.g. Ollama localhost:11434)")]
+        HFRouter[("Hugging Face Inference Providers")]
+    end
+
+    RunModal -->|Submit Run Request| CreateRun
+    ActiveRunCard -->|Poll Progress| GetRunDetail
+    ActiveRunCard -->|Cancel Active Run| CancelRun
+    ResultsModal -->|Query Results| GetResults
+
+    CreateRun --> Runner
+    GetRunDetail --> Runner
+    CancelRun --> Runner
+    GetResults --> RunStorage
+
+    Runner -->|Load Records & Manifest| DatasetLoader
+    Runner -->|Track State & Cancellation| JobMap
+    Runner -->|Execute Prompts In-Process| InternalRunner
+    InternalRunner --> OpenAIAdapter
+    InternalRunner --> HFAdapter
+
+    OpenAIAdapter -->|SSE Stream| LocalLLM
+    HFAdapter -->|SSE Stream| HFRouter
+
+    InternalRunner -->|Assembled Output & Telemetry| Runner
+    Runner -->|Persist Run & JSONL Results| RunStorage
+```
+
+### Architectural Principles:
+1. **In-Process Inference Without Loopback**: Reuses the provider adapters directly (`open_chat_stream`), assembling streamed chunks in memory. Never issues redundant HTTP requests back into TokenPilot's own `/api/gateway` endpoints.
+2. **Zero-Secret Credential Policy**: Transient API tokens (`transient_credential`) are accepted in-memory as `SecretStr` marked `exclude=True`. Tokens are never persisted to disk (`.run.json` or `.results.jsonl`), logged, or returned in API responses.
+3. **SSRF Guard**: Custom model base URLs are validated with `validate_outbound_url`, strictly rejecting cloud metadata endpoints and unauthorized loopbacks.
+4. **Decoupled Scoring Preparation**: In M4.2.1, model responses and reference answers are saved faithfully. Scores remain `null` / unevaluated; answer correctness is never inferred purely from an HTTP 200 status code. GSM8K numerical scoring is implemented in M4.2.2.
+5. **Non-blocking Resilience**: If an individual model times out or encounters a 429 rate limit, the runner records a failed `BenchmarkResult` with error taxonomy and continues evaluating the remaining models and prompts.
+
+
 
 

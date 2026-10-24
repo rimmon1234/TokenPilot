@@ -101,8 +101,10 @@ npm run build
   - [x] **M3.2 — Chat Completion Gateway & Stream Telemetry**
   - [x] **M3.3 — Usage Persistence, History & Cost Auditing**
 - [ ] **M4 — Evaluation Harness & Benchmark Datasets**
-  - [x] **M4.1 — Benchmark Dataset Registry & Import Pipeline** (Current)
-  - [ ] **M4.2 — Multi-Model Benchmark Execution Engine & Quality Scoring**
+  - [x] **M4.1 — Benchmark Dataset Registry & Import Pipeline**
+  - [x] **M4.2.1 — Multi-Model Benchmark Execution Engine** (Current)
+  - [ ] **M4.2.2 — GSM8K Evaluation & Scoring**
+  - [ ] **M4.2.3 — Benchmark Lab Results & Model Comparison UI**
 - [ ] **M5 — Supervised ML Router Training**
 - [ ] **M6 — Automatic Routing & Cost Analytics**
 - [ ] **M7 — Auth, Sessions & Encrypted Cloud Sync**

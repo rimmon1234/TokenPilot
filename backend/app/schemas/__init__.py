@@ -37,11 +37,15 @@ from app.schemas.usage import (
     UsageEvent,
 )
 from app.schemas.evaluation import (
-    BenchmarkResultBase,
-    BenchmarkResult,
-    BenchmarkRunBase,
+    BenchmarkRunStatus,
+    BenchmarkModelConfig,
+    BenchmarkGenerationSettings,
+    BenchmarkRunProgress,
+    BenchmarkRunCreate,
     BenchmarkRun,
+    BenchmarkResult,
 )
+
 from app.schemas.gateway import (
     MessageRole,
     ChatMessage,
@@ -96,10 +100,14 @@ __all__ = [
     "UsageEventBase",
     "UsageEventCreate",
     "UsageEvent",
-    "BenchmarkResultBase",
-    "BenchmarkResult",
-    "BenchmarkRunBase",
+    "BenchmarkRunStatus",
+    "BenchmarkModelConfig",
+    "BenchmarkGenerationSettings",
+    "BenchmarkRunProgress",
+    "BenchmarkRunCreate",
     "BenchmarkRun",
+    "BenchmarkResult",
+
     "MessageRole",
     "ChatMessage",
     "TokenProvenance",

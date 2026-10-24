@@ -227,7 +227,65 @@ Reproducible ground-truth dataset schemas for offline benchmarking and ML router
   - `imported_at`: datetime / ISO timestamp
   - `validation_status`: `'verified' | 'unverified' | 'failed'`
   - `storage_path`: string (local file path to `.jsonl` lines)
-  - `is_benchmarked`: boolean (always `false` upon import; models remain `unbenchmarked` until M4.2 evaluation)
+  - `is_benchmarked`: boolean (always `false` upon import; updated upon M4.2 evaluation)
+
+### K. BenchmarkRun & BenchmarkResult (Evaluation Engine — M4.2.1)
+
+#### `BenchmarkRun`
+Represents an empirical evaluation run against an imported dataset manifest across a set of workspace models.
+- **Fields**:
+  - `id`: string (e.g., `run-gsm8k-1741520000`)
+  - `dataset_manifest_id`: string (references `DatasetManifest.manifest_id`)
+  - `dataset_name`: string
+  - `dataset_id`: string
+  - `dataset_revision`: string (pinned upstream commit SHA)
+  - `source_split`: string (`test`, `train`)
+  - `task_type`: TaskType (`math_reasoning`, `code_generation`)
+  - `model_ids`: list of string
+  - `model_configs`: list of `BenchmarkModelConfig` (model snapshots with baseline pricing)
+  - `status`: `BenchmarkRunStatus` (`pending`, `running`, `completed`, `completed_with_errors`, `failed`, `cancelled`)
+  - `progress`: `BenchmarkRunProgress` (`total_items`, `completed_items`, `failed_items`, `current_model_id`, `current_record_id`)
+  - `generation_settings`: `BenchmarkGenerationSettings` (`temperature`, `max_tokens`, `top_p`)
+  - `subset_size`: optional integer
+  - `seed`: integer (default `42`)
+  - `started_at`: datetime
+  - `completed_at`: optional datetime
+  - `error_message`: optional string
+  - `results_summary`: dict
+
+#### `BenchmarkResult`
+Canonical evaluation result record for an individual prompt executed against a specific model.
+- **Fields**:
+  - `id`: string (deterministic: `res-{run_id}-{record_id}-{model_id}`)
+  - `run_id`: string
+  - `dataset_manifest_id`: string
+  - `dataset_id`: string
+  - `dataset_revision`: string
+  - `source_split`: string
+  - `record_id`: string (references `DatasetRecord.record_id`)
+  - `content_hash`: string
+  - `model_id`: string
+  - `provider_model_id`: string
+  - `model_display_name`: string
+  - `status`: `'success' | 'failed' | 'cancelled'`
+  - `prompt_text`: string (canonical formatted benchmark question)
+  - `reference_answer`: string (ground truth answer)
+  - `reference_metadata`: dict (extracted numeric answer for scoring)
+  - `output_text`: optional string (raw assistant response)
+  - `prompt_tokens`: optional integer
+  - `completion_tokens`: optional integer
+  - `total_tokens`: optional integer
+  - `token_provenance`: `'provider_reported' | 'estimated' | 'unavailable'`
+  - `latency_ms`: float (measured elapsed time)
+  - `ttft_ms`: optional float (time to first SSE chunk)
+  - `finish_reason`: optional string (`stop`, `length`, etc.)
+  - `pricing_snapshot`: optional `PricingSnapshot`
+  - `cost_usd`: optional float (calculated from verified tokens and pricing snapshot)
+  - `error_message`: optional string
+  - `error_category`: optional string (`timeout`, `rate_limit`, `auth_error`, `upstream_error`, `validation_error`)
+  - `score`: optional float (`null` in M4.2.1; evaluated in M4.2.2)
+  - `metric_name`: optional string
+  - `created_at`: datetime
 
 ---
 

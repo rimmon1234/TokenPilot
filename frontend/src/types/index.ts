@@ -365,4 +365,106 @@ export interface DatasetManifest {
   is_benchmarked: boolean;
 }
 
+// Benchmark Execution & Evaluation Types (M4.2.1)
+export type BenchmarkRunStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'completed_with_errors'
+  | 'failed'
+  | 'cancelled';
+
+export interface BenchmarkModelConfig {
+  model_id: string;
+  display_name: string;
+  provider_type: string;
+  execution_mode: ExecutionMode;
+  provider_model_id: string;
+  base_url?: string;
+  huggingface_repo_id?: string;
+  input_price_per_million?: number;
+  output_price_per_million?: number;
+  pricing_source?: string;
+  pricing_snapshot?: PricingSnapshot;
+  transient_credential?: string;
+}
+
+export interface BenchmarkGenerationSettings {
+  temperature: number;
+  max_tokens?: number;
+  top_p?: number;
+}
+
+export interface BenchmarkRunProgress {
+  total_items: number;
+  completed_items: number;
+  failed_items: number;
+  current_model_id?: string;
+  current_record_id?: string;
+}
+
+export interface BenchmarkRunCreate {
+  dataset_manifest_id: string;
+  models: BenchmarkModelConfig[];
+  subset_size?: number | null;
+  seed?: number;
+  generation_settings?: BenchmarkGenerationSettings;
+  concurrency?: number;
+}
+
+export interface BenchmarkRun {
+  id: string;
+  dataset_manifest_id: string;
+  dataset_name: string;
+  dataset_id: string;
+  dataset_revision: string;
+  source_split: string;
+  task_type: DatasetTaskType;
+  model_ids: string[];
+  model_configs: BenchmarkModelConfig[];
+  status: BenchmarkRunStatus;
+  progress: BenchmarkRunProgress;
+  generation_settings: BenchmarkGenerationSettings;
+  subset_size?: number | null;
+  seed: number;
+  started_at: string;
+  completed_at?: string | null;
+  error_message?: string | null;
+  results_summary: Record<string, any>;
+}
+
+export interface BenchmarkResult {
+  id: string;
+  run_id: string;
+  dataset_manifest_id: string;
+  dataset_id: string;
+  dataset_revision: string;
+  source_split: string;
+  record_id: string;
+  content_hash: string;
+  model_id: string;
+  provider_model_id: string;
+  model_display_name: string;
+  status: 'success' | 'failed' | 'cancelled';
+  prompt_text: string;
+  reference_answer: string;
+  reference_metadata: Record<string, any>;
+  output_text?: string | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  total_tokens?: number | null;
+  token_provenance: string;
+  latency_ms: number;
+  ttft_ms?: number | null;
+  finish_reason?: string | null;
+  pricing_snapshot?: PricingSnapshot | null;
+  cost_usd?: number | null;
+  error_message?: string | null;
+  error_category?: string | null;
+  score?: number | null;
+  metric_name?: string | null;
+  created_at: string;
+}
+
+
 

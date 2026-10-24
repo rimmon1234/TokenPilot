@@ -5,7 +5,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.api import hf_router, models_router, pools_router, gateway_router, datasets_router
+from app.api import (
+    hf_router,
+    models_router,
+    pools_router,
+    gateway_router,
+    datasets_router,
+    benchmarks_router,
+)
+
 
 
 logging.basicConfig(
@@ -80,6 +88,8 @@ app.include_router(models_router, prefix="/api")
 app.include_router(pools_router, prefix="/api")
 app.include_router(gateway_router, prefix="/api")
 app.include_router(datasets_router, prefix="/api")
+app.include_router(benchmarks_router, prefix="/api")
+
 
 
 

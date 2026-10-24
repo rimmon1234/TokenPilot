@@ -54,8 +54,18 @@ Milestone M4 introduces reproducible evaluation harnesses and standardized bench
     - `dev_train` / `validation`: Derived exclusively from upstream train splits.
   - Deterministic Sampling: Configurable subset limits (e.g. 5, 10, 25, 50, 100) sampled with fixed random seed (default `42`) to produce identical prompt sets across evaluation runs.
   - Local Storage: Manifests (`.manifest.json`) and canonical records (`.jsonl`) stored locally under `data/datasets/` outside Git tracking.
-- **M4.2 — Multi-Model Benchmark Execution Engine** (Upcoming):
-  - Automated batch runner executing configured workspace models across imported prompt sets.
-  - Latency, token cost, and accuracy scoring (pass@k, exact match).
-  - Versioned benchmark runs stored in `BenchmarkRun` and `BenchmarkResult` entities.
+- **M4.2.1 — Multi-Model Benchmark Execution Engine** (Implemented):
+  - In-process execution runner reusing existing gateway provider adapters without HTTP loopback.
+  - Multi-model evaluation across canonical imported GSM8K records with deterministic subsets.
+  - Transient credentials policy (zero secrets serialized to disk or exposed in API logs).
+  - Telemetry capture: TTFT, total latency, input/output tokens, finish reason, and pricing snapshot cost accounting.
+  - State machine lifecycle (`pending`, `running`, `completed`, `completed_with_errors`, `failed`, `cancelled`).
+  - Strict untrusted code execution guard rejecting HumanEval until sandboxed runtimes are available in M4.3+.
+  - Benchmark Lab execution modal, active progress bar polling, and canonical results viewer.
+- **M4.2.2 — GSM8K Evaluation & Scoring** (Upcoming):
+  - Automated extraction of model numeric answers from GSM8K completions.
+  - Exact match scoring against canonical reference answers.
+  - Evaluation metric aggregation (accuracy, latency distributions, cost-per-correct-solution).
+- **M4.2.3 — Benchmark Lab Results & Model Comparison UI** (Upcoming):
+  - Model comparison matrix, quality vs. cost Pareto frontier curves, and exportable reports.
 

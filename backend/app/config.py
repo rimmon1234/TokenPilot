@@ -25,6 +25,11 @@ class Settings(BaseModel):
         "DATASETS_STORAGE_DIR",
         str(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "datasets")))
     )
+    benchmark_runs_storage_dir: str = os.getenv(
+        "BENCHMARK_RUNS_STORAGE_DIR",
+        str(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "benchmark_runs")))
+    )
+
 
 settings = Settings()
 

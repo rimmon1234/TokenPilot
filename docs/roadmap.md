@@ -75,10 +75,21 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
   - Reproducible import pipeline with Hugging Face Hub provenance, split discipline, and deterministic sampling seeds.
   - Canonical `DatasetRecord` schema with evaluator-ready answers and untrusted code safeguards.
   - Interactive Benchmark Lab UI for template browsing, sample previews, and canonical record inspection.
-- **M4.2 — Multi-Model Benchmark Execution Engine & Quality Scoring** (Planned):
-  - Automated batch inference runner evaluating configured workspace models on imported prompt sets.
-  - Evaluation scoring metrics (pass@k for HumanEval, exact numeric match for GSM8K).
-  - Empirical benchmarking profile generation (`ModelEvaluationProfile`) without fabricated metrics.
+- **M4.2.1 — Multi-Model Benchmark Execution Engine** (Complete):
+  - In-process internal inference runner reusing gateway provider adapters without loopback HTTP calls.
+  - Sequential multi-model evaluation across canonical imported GSM8K records.
+  - Transient credentials policy (zero secrets serialized or logged).
+  - Telemetry capture: TTFT, total latency, input/output tokens, finish reason, and pricing snapshot cost accounting.
+  - Reliable lifecycle state machine (`pending`, `running`, `completed`, `completed_with_errors`, `failed`, `cancelled`).
+  - Strict untrusted code execution guard rejecting HumanEval until sandboxed runtimes are available in M4.3+.
+  - Benchmark Lab execution modal, active progress bar polling, and canonical results viewer.
+- **M4.2.2 — GSM8K Evaluation & Scoring** (Upcoming):
+  - Normalized mathematical ground-truth numeric extraction and comparison.
+  - Strict answer matching without hallucinated accuracy or assumption that HTTP success implies correct reasoning.
+  - Empirical evaluation scoring metrics (exact match accuracy, latency distributions, cost-per-correct-solution).
+- **M4.2.3 — Benchmark Lab Results & Model Comparison UI** (Upcoming):
+  - Multi-model comparison matrix, trade-off frontier curves (accuracy vs. cost vs. latency).
+  - Exportable benchmark reports and model evaluation profiles.
 
 
 ### Milestone M5: Supervised ML Router Training

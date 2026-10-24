@@ -166,11 +166,14 @@ async def _test_openai_compatible(
                     elif isinstance(data, list):
                         model_list = data
 
+                    available_model_names = []
                     if isinstance(model_list, list):
                         total_models_found = len(model_list)
                         req_target = request.provider_model_id.lower()
                         for m in model_list:
                             mid = (m.get("id") or m.get("name") or "") if isinstance(m, dict) else str(m)
+                            if mid:
+                                available_model_names.append(mid)
                             mid_clean = mid.lower()
                             if mid_clean == req_target or mid_clean.split(":")[0] == req_target.split(":")[0]:
                                 found_model = True
@@ -184,9 +187,15 @@ async def _test_openai_compatible(
                         f"in runtime model catalog ({latency}ms). Inference capability ready for gateway calls."
                     )
                 elif total_models_found > 0:
+                    avail_str = ""
+                    if available_model_names:
+                        preview = ", ".join(f"'{name}'" for name in available_model_names[:5])
+                        if len(available_model_names) > 5:
+                            preview += f" (and {len(available_model_names) - 5} more)"
+                        avail_str = f" Available models on server: {preview}."
                     msg = (
                         f"Endpoint is reachable and authenticated ({latency}ms), but model '{sanitized_id}' was not "
-                        f"found among {total_models_found} listed models. Verify the exact model tag on the server."
+                        f"found among {total_models_found} listed models.{avail_str} Verify the exact model tag on the server."
                     )
                 else:
                     msg = f"Endpoint is reachable and responded with HTTP 200 ({latency}ms)."
@@ -201,7 +210,11 @@ async def _test_openai_compatible(
                     latency_ms=latency,
                     diagnostic_message=msg,
                     retryable=False,
-                    safe_details={"models_listed": total_models_found, "model_matched": found_model},
+                    safe_details={
+                        "models_listed": total_models_found,
+                        "model_matched": found_model,
+                        "available_models": available_model_names[:10],
+                    },
                 )
 
             # Case: 401 / 403 Authentication failure

@@ -10,13 +10,14 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
 | :--- | :--- | :--- | :--- |
 | **M0** | Architecture & Repo Setup | Architecture docs, schemas, git workflow, issue templates | **Complete** |
 | **M1** | Frontend/Backend Skeleton | FastAPI foundation, Vite/React shell, navigation, contracts | **Complete** |
-| **M2** | Model Studio & HF Discovery | HF Hub discovery, custom models, pool management, IndexedDB | **In Progress / Current** |
-| **M3** | Direct Gateway Calls & Usage | Inference adapters (HF Providers, OpenAI-compatible), usage accounting | Planned |
-| **M4** | Benchmarking & Evaluation | Evaluation harness, standard benchmark datasets, quality scoring | Planned |
+| **M2** | Model Studio & HF Discovery | HF Hub discovery, custom models, pool management, IndexedDB | **Complete** |
+| **M3** | Direct Gateway Calls & Usage | Inference adapters (HF Providers, OpenAI), telemetry, persistent usage | **Complete** |
+| **M4** | Benchmarking & Evaluation | Dataset registry, reproducible import, evaluation harness, scoring | **In Progress / Current (M4.1 Complete)** |
 | **M5** | Supervised ML Router | Feature extraction, scikit-learn / CatBoost training, model serialization | Planned |
 | **M6** | Intelligent Gateway Routing | Real-time ML routing, cost constraints, savings analytics | Planned |
 | **M7** | Auth & Cloud Workspaces | User auth, encrypted credential vault, multi-device cloud sync | Planned |
 | **M8** | Production Hardening | End-to-end integration tests, security audit, Docker deployment | Planned |
+
 
 ---
 
@@ -69,9 +70,31 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
 - `UsageEvent` recording (token counts, pricing snapshots, measured latency, status)
 
 ### Milestone M4: Dataset Construction & Model Benchmarking
-- Benchmark dataset ingestion (Reasoning, Coding, Conversational subsets)
-- Offline evaluation runner for latency, cost, and quality scoring
-- Populating model evaluation profiles (`ModelEvaluationProfile`)
+- **M4.1 — Benchmark Dataset Registry & Import Pipeline** (Complete):
+  - Pre-registered benchmark templates for GSM8K (math reasoning) and HumanEval (code generation).
+  - Reproducible import pipeline with Hugging Face Hub provenance, split discipline, and deterministic sampling seeds.
+  - Canonical `DatasetRecord` schema with evaluator-ready answers and untrusted code safeguards.
+  - Interactive Benchmark Lab UI for template browsing, sample previews, and canonical record inspection.
+- **M4.2.1 — Multi-Model Benchmark Execution Engine** (Complete):
+  - In-process internal inference runner reusing gateway provider adapters without loopback HTTP calls.
+  - Sequential multi-model evaluation across canonical imported GSM8K records.
+  - Transient credentials policy (zero secrets serialized or logged).
+  - Telemetry capture: TTFT, total latency, input/output tokens, finish reason, and pricing snapshot cost accounting.
+  - Reliable lifecycle state machine (`pending`, `running`, `completed`, `completed_with_errors`, `failed`, `cancelled`).
+  - Strict untrusted code execution guard rejecting HumanEval until sandboxed runtimes are available in M4.3+.
+  - Benchmark Lab execution modal, active progress bar polling, and canonical results viewer.
+- **M4.2.2 — GSM8K Evaluation & Scoring** (Completed):
+  - In-process deterministic scoring of saved GSM8K completions without additional LLM API calls or LLM judges.
+  - Multi-priority regex numerical answer extractor (`####`, `\boxed{}`, final answer phrases, concluding summary statements, concluding equations).
+  - Exact Decimal numerical comparison supporting negative numbers, decimals, currency symbols, and thousands commas.
+  - Explicit five-way outcome classification (`correct`, `incorrect`, `unparseable`, `failed`, `unevaluated`).
+  - Standardized metrics: Scorable Accuracy and End-to-End Correct-Answer Rate with explicit zero-denominator handling.
+  - Safe atomic file persistence (`.jsonl.tmp` and `os.replace`) and idempotent repeated scoring.
+  - Benchmark Lab UI scoring action, summary metrics banner, outcome filters, and candidate vs reference answer inspection.
+- **M4.2.3 — Benchmark Lab Results & Model Comparison UI** (Upcoming):
+  - Multi-model comparison matrix, trade-off frontier curves (accuracy vs. cost vs. latency).
+  - Exportable benchmark reports and model evaluation profiles.
+
 
 ### Milestone M5: Supervised ML Router Training
 - Feature engineering on input prompts (syntactic tokens, regex markers, embeddings)

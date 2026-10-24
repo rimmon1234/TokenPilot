@@ -13,6 +13,9 @@ from app.schemas.models import (
     WorkspaceModel,
     HuggingFaceDiscoveredModel,
     HFSearchResponse,
+    ConnectionTestStatus,
+    ConnectionTestRequest,
+    ConnectionTestResult,
 )
 from app.schemas.routing import (
     RoutingStrategy,
@@ -34,11 +37,39 @@ from app.schemas.usage import (
     UsageEvent,
 )
 from app.schemas.evaluation import (
-    BenchmarkResultBase,
-    BenchmarkResult,
-    BenchmarkRunBase,
+    BenchmarkRunStatus,
+    BenchmarkModelConfig,
+    BenchmarkGenerationSettings,
+    BenchmarkRunProgress,
+    BenchmarkRunCreate,
     BenchmarkRun,
+    BenchmarkResult,
+    EvaluationOutcome,
+    ModelScoringSummary,
+    BenchmarkRunScoringSummary,
 )
+
+from app.schemas.gateway import (
+    MessageRole,
+    ChatMessage,
+    TokenProvenance,
+    GatewayChatRequest,
+    StreamMetaEvent,
+    StreamTokenEvent,
+    StreamUsageEvent,
+    StreamDoneEvent,
+    StreamErrorEvent,
+)
+from app.schemas.dataset import (
+    TaskType,
+    EvaluationRole,
+    DatasetValidationStatus,
+    DatasetRecord,
+    DatasetTemplate,
+    DatasetImportRequest,
+    DatasetManifest,
+)
+
 
 __all__ = [
     "ExecutionMode",
@@ -54,6 +85,9 @@ __all__ = [
     "WorkspaceModel",
     "HuggingFaceDiscoveredModel",
     "HFSearchResponse",
+    "ConnectionTestStatus",
+    "ConnectionTestRequest",
+    "ConnectionTestResult",
     "RoutingStrategy",
     "RoutingPoolBase",
     "RoutingPoolCreate",
@@ -69,8 +103,32 @@ __all__ = [
     "UsageEventBase",
     "UsageEventCreate",
     "UsageEvent",
-    "BenchmarkResultBase",
-    "BenchmarkResult",
-    "BenchmarkRunBase",
+    "BenchmarkRunStatus",
+    "BenchmarkModelConfig",
+    "BenchmarkGenerationSettings",
+    "BenchmarkRunProgress",
+    "BenchmarkRunCreate",
     "BenchmarkRun",
+    "BenchmarkResult",
+    "EvaluationOutcome",
+    "ModelScoringSummary",
+    "BenchmarkRunScoringSummary",
+
+    "MessageRole",
+    "ChatMessage",
+    "TokenProvenance",
+    "GatewayChatRequest",
+    "StreamMetaEvent",
+    "StreamTokenEvent",
+    "StreamUsageEvent",
+    "StreamDoneEvent",
+    "StreamErrorEvent",
+    "TaskType",
+    "EvaluationRole",
+    "DatasetValidationStatus",
+    "DatasetRecord",
+    "DatasetTemplate",
+    "DatasetImportRequest",
+    "DatasetManifest",
 ]
+

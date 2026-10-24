@@ -81,3 +81,28 @@ def test_default_pools_endpoint():
     names = [p["name"] for p in pools]
     assert "Economy" in names
     assert "Quality" in names
+
+
+def test_test_connection_endpoint_validation():
+    """Verify POST /api/models/test-connection rejects invalid execution modes or payload."""
+    response = client.post("/api/models/test-connection", json={
+        "provider_type": "ollama",
+        "execution_mode": "invalid_mode",
+        "provider_model_id": "test",
+    })
+    assert response.status_code == 422
+
+
+def test_test_connection_endpoint_missing_base_url():
+    """Verify POST /api/models/test-connection returns configuration_error if base_url missing."""
+    response = client.post("/api/models/test-connection", json={
+        "provider_type": "ollama",
+        "execution_mode": "local_openai_compatible",
+        "provider_model_id": "llama3.2:3b",
+        "base_url": "",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "configuration_error"
+    assert "Missing base URL" in data["diagnostic_message"]
+

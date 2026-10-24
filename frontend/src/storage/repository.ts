@@ -1,4 +1,11 @@
-import { WorkspaceModel, RoutingPool, PoolMembership, UsageEvent } from '../types';
+import {
+  WorkspaceModel,
+  RoutingPool,
+  PoolMembership,
+  UsageEvent,
+  Conversation,
+  WorkspaceSettings,
+} from '../types';
 
 export interface IWorkspaceRepository {
   // Workspace Models
@@ -19,9 +26,21 @@ export interface IWorkspaceRepository {
   removeMembershipsForPool(poolId: string): Promise<void>;
   removeMembershipsForModel(modelId: string): Promise<void>;
 
+  // Conversations
+  getConversations(): Promise<Conversation[]>;
+  getConversation(id: string): Promise<Conversation | undefined>;
+  saveConversation(conversation: Conversation): Promise<void>;
+  deleteConversation(id: string): Promise<void>;
+  clearAllConversations(): Promise<void>;
+
+  // Settings & Retention
+  getSettings(): Promise<WorkspaceSettings>;
+  saveSettings(settings: WorkspaceSettings): Promise<void>;
+
   // Usage Events
   getUsageEvents(): Promise<UsageEvent[]>;
   recordUsageEvent(event: UsageEvent): Promise<void>;
+  clearAllUsageEvents(): Promise<void>;
 
   // Initialization check
   isInitialized(): Promise<boolean>;

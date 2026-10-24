@@ -86,36 +86,247 @@ Routing configuration rules per pool.
 - `retry_on_failure`: boolean
 - `max_retries`: integer
 
-### F. UsageEvent
-Request auditing, cost accounting, and latency telemetry.
-- `id`: string (UUID v4)
-- `workspace_model_id`: string
-- `model_display_name_snapshot`: string
+### F. UsageEvent (M3.3)
+Request auditing, cost accounting, and latency telemetry. Each gateway interaction produces an immutable, idempotent usage event:
+- `id`: string (UUID or matching `request_id`)
+- `request_id`: string (unique client/server correlation ID)
+- `conversation_id`: optional string (foreign key to `Conversation.id`)
+- `workspace_model_id`: string (ID of selected model configuration)
+- `model_display_name_snapshot`: string (immutable snapshot of model name)
+- `provider_type`: string (`ollama`, `huggingface`, `openai`, `vllm`)
+- `provider_model_id`: string (target upstream model identifier)
+- `execution_location`: `'local' | 'remote'`
+- `execution_mode`: ExecutionMode enum
 - `routing_pool_id`: optional string
-- `prompt_tokens`: integer
-- `completion_tokens`: integer
-- `total_tokens`: integer
-- `pricing_snapshot`: object (`{ input_price_per_million: number, output_price_per_million: number }`)
-- `estimated_cost_usd`: number
+- `prompt_tokens`: integer or null
+- `completion_tokens`: integer or null
+- `total_tokens`: integer or null
+- `token_provenance`: `'provider_reported' | 'estimated' | 'unavailable'`
+- `pricing_snapshot`: object:
+  - `input_price_per_million`: number or null
+  - `output_price_per_million`: number or null
+  - `pricing_source`: string (`official_docs`, `provider_averages`, `free_local`, `unknown`)
+  - `is_free_tier`: optional boolean
+- `pricing_provenance`: `'configured' | 'verified' | 'unknown'`
+- `cost_status`: `'known' | 'unknown'`
+- `estimated_cost_usd`: number or null
 - `latency_ms`: number
-- `time_to_first_token_ms`: optional number
+- `time_to_first_token_ms`: optional number or null
+- `finish_reason`: optional string (`stop`, `length`, `cancelled`, `error`)
 - `success`: boolean
+- `status`: `'success' | 'failed' | 'cancelled'`
 - `error_message`: optional string
+- `error_category`: optional string
 - `routed_by`: string (`'direct' | 'ml_router' | 'fallback' | 'cost_rule'`)
 - `timestamp`: string (ISO 8601)
 
-### G. Conversation and Message
-Conversation structures for interactive chat.
-- `Conversation`: `id`, `title`, `workspace_id`, `created_at`, `updated_at`
-- `Message`: `id`, `conversation_id`, `role` (`'system' | 'user' | 'assistant'`), `content`, `usage_event_id`, `timestamp`
+#### Cost Accounting Formula
+$$\text{estimated\_cost} = \frac{\text{prompt\_tokens} \times \text{input\_price\_per\_million} + \text{completion\_tokens} \times \text{output\_price\_per\_million}}{1,000,000}$$
+- **Remote Models**: Calculated only when token counts and price card rates are non-negative numbers.
+- **Local Models**: Marked as `cost_status: 'unknown'` and `estimated_cost_usd: null` by default, because local compute has real electricity/hardware costs and must not be falsely claimed as $0.00 free spend.
+- **Promotional Free Tier**: Explicitly configured zero pricing is preserved as $0.00 with `cost_status: 'known'`, distinct from missing prices.
+
+### G. Conversation and ChatMessage (M3.3)
+Interactive conversation threads persisted locally in browser IndexedDB:
+- **`Conversation`**:
+  - `id`: string (UUID e.g. `conv-1730000000000`)
+  - `title`: string (auto-derived from initial prompt or user-edited)
+  - `created_at`: string (ISO 8601)
+  - `updated_at`: string (ISO 8601)
+  - `model_id`: optional string (reference to last active model)
+  - `model_display_name_snapshot`: optional string (model name attribution snapshot)
+  - `messages`: array of `ChatMessage`
+  - `last_status`: optional `'completed' | 'failed' | 'cancelled' | 'in_progress'`
+  - `usage_event_ids`: optional array of string IDs linking to associated `UsageEvent` records
+- **`ChatMessage`**:
+  - `id`: optional string
+  - `role`: `'system' | 'user' | 'assistant'`
+  - `content`: string (or masked if prompt retention is disabled)
+  - `timestamp`: optional string
+  - `model_display_name`: optional string (assistant model attribution)
+  - `usage_event_id`: optional string
+  - `status`: optional `'success' | 'failed' | 'cancelled'`
+- **`WorkspaceSettings`**:
+  - `retain_prompts`: boolean (default `true`). When toggled to `false`, raw prompts are excluded from persistence to protect sensitive queries.
 
 ### H. BenchmarkRun & BenchmarkResult
 Reproducible evaluation of models and routing policies.
 - `BenchmarkRun`: `id`, `dataset_name`, `dataset_version`, `model_ids` (array), `status`, `started_at`, `completed_at`
 - `BenchmarkResult`: `id`, `run_id`, `model_id`, `prompt_id`, `score`, `metric_name`, `latency_ms`, `cost_usd`, `output_text`
 
+### I. Gateway Chat & Streaming Events (M3.2)
+Schemas governing `POST /api/gateway/chat/completions` and Server-Sent Events:
+- **`GatewayChatRequest`**:
+  - `model_id`: optional string (workspace reference)
+  - `model_display_name`: optional string
+  - `provider_type`: string (`ollama`, `vllm`, `huggingface`, `openai`)
+  - `execution_mode`: ExecutionMode enum
+  - `provider_model_id`: string (e.g. `llama3.2:3b`, `Qwen/Qwen2.5-Coder-7B-Instruct`)
+  - `base_url`: optional string (validated against SSRF)
+  - `messages`: array of `ChatMessage` (`role: 'system' | 'user' | 'assistant'`, `content: string`)
+  - `temperature`: float (`0.0` - `2.0`)
+  - `max_tokens`: optional integer (`1` - `128000`)
+  - `top_p`: optional float (`0.0` - `1.0`)
+  - `stream`: boolean (default `true`)
+  - `transient_credential`: optional `SecretStr` (held in memory only; never persisted or logged)
+  - `input_price_per_million`: optional float
+  - `output_price_per_million`: optional float
+  - `pricing_source`: optional string
+  - `request_id`: optional string
+- **Server-Sent Events (`text/event-stream`)**:
+  - `meta`: `{"type": "meta", "request_id": string, "model_id": string, "provider_model_id": string, "provider_type": string, "execution_mode": string}`
+  - `token`: `{"type": "token", "text": string}`
+  - `usage`: `{"type": "usage", "prompt_tokens": int, "completion_tokens": int, "total_tokens": int, "provenance": "provider_reported" | "estimated" | "unavailable", "estimated_cost_usd": float}`
+  - `done`: `{"type": "done", "finish_reason": string, "latency_ms": float, "ttft_ms": float}`
+  - `error`: `{"type": "error", "error": string, "code": string}`
+
+### J. Benchmark Dataset Registry & Canonical Records (M4.1)
+Reproducible ground-truth dataset schemas for offline benchmarking and ML router training:
+- **`DatasetRecord`**:
+  - `record_id`: string (deterministic identifier, e.g. `rec-gsm8k-test-0-4a8b...`)
+  - `dataset_id`: string (`gsm8k` | `humaneval`)
+  - `dataset_revision`: string (resolved Hugging Face commit SHA)
+  - `source_split`: string (`test` | `train`)
+  - `evaluation_role`: `'dev_train' | 'validation' | 'held_out_test'` (enforces strict split discipline)
+  - `task_type`: `'math_reasoning' | 'code_generation'`
+  - `input_messages`: array of `{ role: string, content: string }`
+  - `reference_answer`: string (unaltered upstream reference ground truth)
+  - `reference_metadata`: object (e.g. `extracted_answer`, `entry_point`, `test`, `execution_policy`)
+  - `license`: string (recorded from dataset card, e.g. `MIT`)
+  - `source_url`: string (upstream Hugging Face repository URL)
+  - `content_hash`: string (SHA-256 fingerprint of prompt + reference)
+- **`DatasetTemplate`**:
+  - `id`: string (`gsm8k`, `humaneval`)
+  - `name`: string
+  - `description`: string
+  - `task_type`: TaskType
+  - `hf_repo_id`: string
+  - `available_splits`: array of strings
+  - `allowed_roles_per_split`: map of split -> allowed roles (prevents leaking test records into training)
+  - `license`: string
+  - `license_verified`: boolean
+  - `pinned_revision`: string (verified commit SHA fallback)
+  - `recommended_subsets`: array of integers (e.g. `[5, 10, 25, 50, 100]`)
+  - `sample_records`: array of sample preview records
+- **`DatasetManifest`**:
+  - `manifest_id`: string (unique import identifier, e.g. `ds-gsm8k-test-held_out_test-sub10-a1b2c3`)
+  - `dataset_id`: string
+  - `dataset_name`: string
+  - `task_type`: TaskType
+  - `hf_repo_id`: string
+  - `source_url`: string
+  - `source_revision`: string
+  - `license`: string
+  - `source_split`: string
+  - `evaluation_role`: EvaluationRole
+  - `total_upstream_records`: optional integer
+  - `imported_record_count`: integer
+  - `subset_size`: optional integer (null if full split imported)
+  - `sampling_seed`: optional integer (pinned seed for reproducible sampling, e.g. `42`)
+  - `content_fingerprint`: string (SHA-256 hash over sorted canonical record content hashes)
+  - `imported_at`: datetime / ISO timestamp
+  - `validation_status`: `'verified' | 'unverified' | 'failed'`
+  - `storage_path`: string (local file path to `.jsonl` lines)
+  - `is_benchmarked`: boolean (always `false` upon import; updated upon M4.2 evaluation)
+
+### K. BenchmarkRun & BenchmarkResult (Evaluation Engine — M4.2.1 & M4.2.2)
+
+#### `EvaluationOutcome` Enum
+- `correct`: Parsed candidate answer exactly matches canonical ground truth (`score = 1.0`).
+- `incorrect`: Parsed candidate answer differs from canonical ground truth (`score = 0.0`).
+- `unparseable`: Generation succeeded, but no confident numeric answer could be extracted (`score = 0.0`).
+- `failed`: Inference request timed out, threw an error, or was cancelled (`score = None`). Inference status is decoupled from math correctness.
+- `unevaluated`: Pre-scoring default status (`score = None`).
+
+#### `ModelScoringSummary` & `BenchmarkRunScoringSummary`
+Persisted inside `BenchmarkRun.results_summary`:
+- `evaluation_metric`: string (`'exact_match'`)
+- `evaluated_at`: datetime (ISO 8601)
+- `total_attempted`: integer (records × models)
+- `total_successful`: integer (successful inference generations)
+- `total_correct`: integer
+- `total_incorrect`: integer
+- `total_unparseable`: integer
+- `total_failed`: integer (inference failures)
+- `total_unevaluated`: integer
+- `scorable_accuracy`: float or null (`correct / (correct + incorrect)`; null if denominator is 0)
+- `end_to_end_accuracy`: float or null (`correct / attempted`; null if denominator is 0)
+- `model_metrics`: map of `model_id` to `ModelScoringSummary`:
+  - `model_id`: string
+  - `display_name`: string
+  - `attempted_questions`: integer
+  - `successful_generations`: integer
+  - `correct_answers`: integer
+  - `incorrect_answers`: integer
+  - `unparseable_answers`: integer
+  - `failed_requests`: integer
+  - `unevaluated_results`: integer
+  - `scorable_accuracy`: float or null
+  - `end_to_end_accuracy`: float or null
+
+#### `BenchmarkRun`
+Represents an empirical evaluation run against an imported dataset manifest across a set of workspace models.
+- **Fields**:
+  - `id`: string (e.g., `run-gsm8k-1741520000`)
+  - `dataset_manifest_id`: string (references `DatasetManifest.manifest_id`)
+  - `dataset_name`: string
+  - `dataset_id`: string
+  - `dataset_revision`: string (pinned upstream commit SHA)
+  - `source_split`: string (`test`, `train`)
+  - `task_type`: TaskType (`math_reasoning`, `code_generation`)
+  - `model_ids`: list of string
+  - `model_configs`: list of `BenchmarkModelConfig` (model snapshots with baseline pricing)
+  - `status`: `BenchmarkRunStatus` (`pending`, `running`, `completed`, `completed_with_errors`, `failed`, `cancelled`)
+  - `progress`: `BenchmarkRunProgress` (`total_items`, `completed_items`, `failed_items`, `current_model_id`, `current_record_id`)
+  - `generation_settings`: `BenchmarkGenerationSettings` (`temperature`, `max_tokens`, `top_p`)
+  - `subset_size`: optional integer
+  - `seed`: integer (default `42`)
+  - `started_at`: datetime
+  - `completed_at`: optional datetime
+  - `error_message`: optional string
+  - `results_summary`: dict (populated with `BenchmarkRunScoringSummary` upon scoring)
+
+#### `BenchmarkResult`
+Canonical evaluation result record for an individual prompt executed against a specific model.
+- **Fields**:
+  - `id`: string (deterministic: `res-{run_id}-{record_id}-{model_id}`)
+  - `run_id`: string
+  - `dataset_manifest_id`: string
+  - `dataset_id`: string
+  - `dataset_revision`: string
+  - `source_split`: string
+  - `record_id`: string (references `DatasetRecord.record_id`)
+  - `content_hash`: string
+  - `model_id`: string
+  - `provider_model_id`: string
+  - `model_display_name`: string
+  - `status`: `'success' | 'failed' | 'cancelled'`
+  - `prompt_text`: string (canonical formatted benchmark question)
+  - `reference_answer`: string (ground truth answer)
+  - `reference_metadata`: dict (extracted numeric answer for scoring)
+  - `output_text`: optional string (raw assistant response)
+  - `prompt_tokens`: optional integer
+  - `completion_tokens`: optional integer
+  - `total_tokens`: optional integer
+  - `token_provenance`: `'provider_reported' | 'estimated' | 'unavailable'`
+  - `latency_ms`: float (measured elapsed time)
+  - `ttft_ms`: optional float (time to first SSE chunk)
+  - `finish_reason`: optional string (`stop`, `length`, etc.)
+  - `pricing_snapshot`: optional `PricingSnapshot`
+  - `cost_usd`: optional float (calculated from verified tokens and pricing snapshot)
+  - `error_message`: optional string
+  - `error_category`: optional string (`timeout`, `rate_limit`, `auth_error`, `upstream_error`, `validation_error`)
+  - `evaluation_status`: `EvaluationOutcome` (`'correct' | 'incorrect' | 'unparseable' | 'failed' | 'unevaluated'`)
+  - `extracted_answer`: optional string (normalized candidate number extracted from output text)
+  - `evaluation_details`: dict (evaluation metadata: matched pattern, clean candidate, clean target)
+  - `score`: optional float (`1.0` if correct, `0.0` if incorrect or unparseable, `None` if failed or unevaluated)
+  - `metric_name`: optional string (`'exact_match'`)
+  - `created_at`: datetime
+
 ---
+
 
 ## 2. Multi-Tenant Future Proofing
 
 All entity definitions include an optional `workspace_id` and `user_id` in their database mapping layer. In Milestone M7 (Authentication & Cloud Sync), row-level tenancy will be enforced via JWT session claims without breaking frontend contracts.
+

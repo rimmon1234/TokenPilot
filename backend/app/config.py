@@ -17,5 +17,20 @@ class Settings(BaseModel):
     ]
     hf_token: str | None = os.getenv("HF_TOKEN")
     hf_api_timeout_seconds: float = float(os.getenv("HF_TIMEOUT", "15.0"))
+    allow_local_network_tests: bool = os.getenv(
+        "ALLOW_LOCAL_NETWORK_TESTS",
+        "true" if os.getenv("ENVIRONMENT", "development") == "development" else "false"
+    ).lower() in ("true", "1", "yes")
+    datasets_storage_dir: str = os.getenv(
+        "DATASETS_STORAGE_DIR",
+        str(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "datasets")))
+    )
+    benchmark_runs_storage_dir: str = os.getenv(
+        "BENCHMARK_RUNS_STORAGE_DIR",
+        str(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "benchmark_runs")))
+    )
+
 
 settings = Settings()
+
+

@@ -10,6 +10,7 @@ import {
   ShieldAlert,
   CheckCircle,
   HelpCircle,
+  Activity,
 } from 'lucide-react';
 import { WorkspaceModel, RoutingPool } from '../../types';
 import { Badge } from '../ui/Badge';
@@ -21,6 +22,7 @@ interface WorkspaceModelCardProps {
   onToggleEnabled: (id: string, enabled: boolean) => void;
   onEdit: (model: WorkspaceModel) => void;
   onDelete: (id: string) => void;
+  onTestConnection: (model: WorkspaceModel) => void;
 }
 
 export const WorkspaceModelCard: React.FC<WorkspaceModelCardProps> = ({
@@ -29,6 +31,7 @@ export const WorkspaceModelCard: React.FC<WorkspaceModelCardProps> = ({
   onToggleEnabled,
   onEdit,
   onDelete,
+  onTestConnection,
 }) => {
   const assignedPools = allPools.filter((p) => model.assigned_pool_ids.includes(p.id));
 
@@ -141,6 +144,21 @@ export const WorkspaceModelCard: React.FC<WorkspaceModelCardProps> = ({
         >
           {model.evaluation_status === 'unbenchmarked' ? 'Unbenchmarked' : 'Benchmarked'}
         </Badge>
+
+        {/* Diagnostic connection status */}
+        {model.connection_status === 'connected' ? (
+          <Badge variant="success" icon={<Activity className="w-3 h-3 text-emerald-400" />}>
+            Connected {model.last_latency_ms ? `(${model.last_latency_ms}ms)` : ''}
+          </Badge>
+        ) : model.connection_status === 'authentication_failed' ? (
+          <Badge variant="danger">Auth Failed</Badge>
+        ) : model.connection_status === 'unreachable' ? (
+          <Badge variant="danger">Unreachable</Badge>
+        ) : model.connection_status === 'inconclusive' ? (
+          <Badge variant="warning">Inconclusive</Badge>
+        ) : (
+          <Badge variant="neutral">Untested</Badge>
+        )}
       </div>
 
       {/* Pricing info box */}
@@ -182,9 +200,21 @@ export const WorkspaceModelCard: React.FC<WorkspaceModelCardProps> = ({
       {/* Footer Actions */}
       <div className="flex items-center justify-between pt-3 border-t border-dark-800">
         <span className="text-[10px] text-slate-500">
-          Added {new Date(model.created_at).toLocaleDateString()}
+          {model.last_tested_at
+            ? `Tested ${new Date(model.last_tested_at).toLocaleTimeString()}`
+            : `Added ${new Date(model.created_at).toLocaleDateString()}`}
         </span>
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            className="hover:border-cyan-500/50"
+            icon={<Activity className="w-3.5 h-3.5 text-cyan-400" />}
+            onClick={() => onTestConnection(model)}
+            title="Run active connection & diagnostic test"
+          >
+            Test
+          </Button>
           <Button
             size="sm"
             variant="secondary"

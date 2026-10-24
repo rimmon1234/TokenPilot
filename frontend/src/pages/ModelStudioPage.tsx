@@ -14,6 +14,7 @@ import {
   RoutingPool,
   ModelTemplate,
   HuggingFaceDiscoveredModel,
+  ConnectionTestStatus,
 } from '../types';
 import { workspaceRepo } from '../storage/indexeddb_repository';
 import { fetchModelTemplates, fetchDefaultPools } from '../services/api';
@@ -23,6 +24,7 @@ import { HuggingFaceSearch } from '../components/studio/HuggingFaceSearch';
 import { ConfigureModelModal } from '../components/studio/ConfigureModelModal';
 import { AddCustomModelModal } from '../components/studio/AddCustomModelModal';
 import { PoolManagerModal } from '../components/studio/PoolManagerModal';
+import { TestConnectionModal } from '../components/studio/TestConnectionModal';
 import { Button } from '../components/ui/Button';
 
 export const ModelStudioPage: React.FC = () => {
@@ -45,6 +47,33 @@ export const ModelStudioPage: React.FC = () => {
 
   const [isCustomModalOpen, setIsCustomModalOpen] = useState(false);
   const [isPoolModalOpen, setIsPoolModalOpen] = useState(false);
+  const [isTestModalOpen, setIsTestModalOpen] = useState(false);
+  const [modelToTest, setModelToTest] = useState<WorkspaceModel | null>(null);
+
+  const handleOpenTestConnection = (model: WorkspaceModel) => {
+    setModelToTest(model);
+    setIsTestModalOpen(true);
+  };
+
+  const handleUpdateModelConnectionStatus = async (
+    modelId: string,
+    status: ConnectionTestStatus,
+    latencyMs: number | undefined,
+    message: string
+  ) => {
+    const model = workspaceModels.find((m) => m.id === modelId);
+    if (!model) return;
+    const updated: WorkspaceModel = {
+      ...model,
+      connection_status: status,
+      last_tested_at: new Date().toISOString(),
+      last_latency_ms: latencyMs,
+      last_diagnostic_message: message,
+      updated_at: new Date().toISOString(),
+    };
+    await workspaceRepo.saveWorkspaceModel(updated);
+    setWorkspaceModels((prev) => prev.map((m) => (m.id === modelId ? updated : m)));
+  };
 
   // Load initial workspace state from IndexedDB
   const loadWorkspaceData = async () => {
@@ -339,6 +368,7 @@ export const ModelStudioPage: React.FC = () => {
                   onToggleEnabled={handleToggleEnabled}
                   onEdit={handleEditModel}
                   onDelete={handleDeleteModel}
+                  onTestConnection={handleOpenTestConnection}
                 />
               ))}
             </div>
@@ -432,6 +462,13 @@ export const ModelStudioPage: React.FC = () => {
         onRenamePool={handleRenamePool}
         onDeletePool={handleDeletePool}
         onToggleModelInPool={handleToggleModelInPool}
+      />
+
+      <TestConnectionModal
+        isOpen={isTestModalOpen}
+        onClose={() => setIsTestModalOpen(false)}
+        model={modelToTest}
+        onUpdateModelStatus={handleUpdateModelConnectionStatus}
       />
     </div>
   );

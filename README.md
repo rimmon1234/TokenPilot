@@ -95,9 +95,16 @@ npm run build
 
 - [x] **M0 — Architecture, Documentation & Repo Setup**
 - [x] **M1 — Frontend/Backend Skeleton & Core Contracts**
-- [x] **M2 — Model Studio, Hugging Face Discovery & Dynamic Pools** (Current)
-- [ ] **M3 — Direct Gateway Execution, Credentials & Telemetry**
+- [x] **M2 — Model Studio, Hugging Face Discovery & Dynamic Pools**
+- [x] **M3 — Direct Gateway Execution, Credentials & Telemetry**
+  - [x] **M3.1 — Model Connection Testing & Diagnostics**
+  - [x] **M3.2 — Chat Completion Gateway & Stream Telemetry**
+  - [x] **M3.3 — Usage Persistence, History & Cost Auditing**
 - [ ] **M4 — Evaluation Harness & Benchmark Datasets**
+  - [x] **M4.1 — Benchmark Dataset Registry & Import Pipeline**
+  - [x] **M4.2.1 — Multi-Model Benchmark Execution Engine**
+  - [x] **M4.2.2 — GSM8K Evaluation & Scoring**
+  - [ ] **M4.2.3 — Benchmark Lab Results & Model Comparison UI** (Upcoming)
 - [ ] **M5 — Supervised ML Router Training**
 - [ ] **M6 — Automatic Routing & Cost Analytics**
 - [ ] **M7 — Auth, Sessions & Encrypted Cloud Sync**

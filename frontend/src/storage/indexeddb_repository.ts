@@ -1,5 +1,12 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
-import { WorkspaceModel, RoutingPool, PoolMembership, UsageEvent } from '../types';
+import {
+  WorkspaceModel,
+  RoutingPool,
+  PoolMembership,
+  UsageEvent,
+  Conversation,
+  WorkspaceSettings,
+} from '../types';
 import { IWorkspaceRepository } from './repository';
 
 interface TokenPilotDB extends DBSchema {
@@ -25,6 +32,14 @@ interface TokenPilotDB extends DBSchema {
     indexes: {
       'by-model': string;
       'by-timestamp': string;
+      'by-conversation': string;
+    };
+  };
+  conversations: {
+    key: string;
+    value: Conversation;
+    indexes: {
+      'by-updated': string;
     };
   };
   meta: {
@@ -34,7 +49,7 @@ interface TokenPilotDB extends DBSchema {
 }
 
 const DB_NAME = 'tokenpilot_workspace_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export class IndexedDBWorkspaceRepository implements IWorkspaceRepository {
   private dbPromise: Promise<IDBPDatabase<TokenPilotDB>> | null = null;
@@ -43,6 +58,7 @@ export class IndexedDBWorkspaceRepository implements IWorkspaceRepository {
   private inMemoryPools = new Map<string, RoutingPool>();
   private inMemoryMemberships = new Map<string, PoolMembership>();
   private inMemoryEvents = new Map<string, UsageEvent>();
+  private inMemoryConversations = new Map<string, Conversation>();
   private inMemoryMeta = new Map<string, any>();
   private isFallback = false;
 
@@ -73,6 +89,11 @@ export class IndexedDBWorkspaceRepository implements IWorkspaceRepository {
               const eventStore = db.createObjectStore('usage_events', { keyPath: 'id' });
               eventStore.createIndex('by-model', 'workspace_model_id');
               eventStore.createIndex('by-timestamp', 'timestamp');
+              eventStore.createIndex('by-conversation', 'conversation_id');
+            }
+            if (!db.objectStoreNames.contains('conversations')) {
+              const convStore = db.createObjectStore('conversations', { keyPath: 'id' });
+              convStore.createIndex('by-updated', 'updated_at');
             }
             if (!db.objectStoreNames.contains('meta')) {
               db.createObjectStore('meta', { keyPath: 'key' });
@@ -112,7 +133,7 @@ export class IndexedDBWorkspaceRepository implements IWorkspaceRepository {
   }
 
   async deleteWorkspaceModel(id: string): Promise<void> {
-    // Note: Usage events are preserved!
+    // Note: Historical usage events and conversations are preserved!
     const db = await this.getDB();
     if (!db) {
       this.inMemoryModels.delete(id);
@@ -213,14 +234,89 @@ export class IndexedDBWorkspaceRepository implements IWorkspaceRepository {
     await tx.done;
   }
 
+  // --- Conversations ---
+
+  async getConversations(): Promise<Conversation[]> {
+    const db = await this.getDB();
+    if (!db) {
+      const list = Array.from(this.inMemoryConversations.values());
+      return list.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+    }
+    const list = await db.getAll('conversations');
+    return list.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  }
+
+  async getConversation(id: string): Promise<Conversation | undefined> {
+    const db = await this.getDB();
+    if (!db) return this.inMemoryConversations.get(id);
+    return db.get('conversations', id);
+  }
+
+  async saveConversation(conversation: Conversation): Promise<void> {
+    const db = await this.getDB();
+    if (!db) {
+      this.inMemoryConversations.set(conversation.id, conversation);
+      return;
+    }
+    await db.put('conversations', conversation);
+  }
+
+  async deleteConversation(id: string): Promise<void> {
+    // Explicitly delete only the conversation. Usage events are preserved!
+    const db = await this.getDB();
+    if (!db) {
+      this.inMemoryConversations.delete(id);
+      return;
+    }
+    await db.delete('conversations', id);
+  }
+
+  async clearAllConversations(): Promise<void> {
+    const db = await this.getDB();
+    if (!db) {
+      this.inMemoryConversations.clear();
+      return;
+    }
+    await db.clear('conversations');
+  }
+
+  // --- Settings & Retention ---
+
+  async getSettings(): Promise<WorkspaceSettings> {
+    const db = await this.getDB();
+    const defaultSettings: WorkspaceSettings = { retain_prompts: true };
+    if (!db) {
+      return this.inMemoryMeta.get('settings') || defaultSettings;
+    }
+    const record = await db.get('meta', 'settings');
+    return record?.val || defaultSettings;
+  }
+
+  async saveSettings(settings: WorkspaceSettings): Promise<void> {
+    const db = await this.getDB();
+    if (!db) {
+      this.inMemoryMeta.set('settings', settings);
+      return;
+    }
+    await db.put('meta', { key: 'settings', val: settings });
+  }
+
   // --- Usage Events ---
 
   async getUsageEvents(): Promise<UsageEvent[]> {
     const db = await this.getDB();
-    if (!db) return Array.from(this.inMemoryEvents.values());
-    return db.getAll('usage_events');
+    if (!db) {
+      const list = Array.from(this.inMemoryEvents.values());
+      return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    }
+    const list = await db.getAll('usage_events');
+    return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
+  /**
+   * Idempotently saves or updates a usage event.
+   * If a record with event.id exists, it is updated in-place without duplicating records.
+   */
   async recordUsageEvent(event: UsageEvent): Promise<void> {
     const db = await this.getDB();
     if (!db) {
@@ -228,6 +324,15 @@ export class IndexedDBWorkspaceRepository implements IWorkspaceRepository {
       return;
     }
     await db.put('usage_events', event);
+  }
+
+  async clearAllUsageEvents(): Promise<void> {
+    const db = await this.getDB();
+    if (!db) {
+      this.inMemoryEvents.clear();
+      return;
+    }
+    await db.clear('usage_events');
   }
 
   // --- Meta / Initialization ---

@@ -87,4 +87,23 @@ With Milestone M3.2 adding live streaming chat completion (`POST /api/gateway/ch
    - Target endpoints are restricted to valid HTTP/HTTPS URLs. Private RFC 1918 networks and cloud instance metadata services (`169.254.169.254`) are blocked in production deployments.
    - For deployed applications, credentials must only be transmitted over TLS (HTTPS). Plain HTTP is restricted to development mode.
 
+---
+
+## 6. Persistent Usage & Chat Privacy Controls (Milestone M3.3)
+
+Milestone M3.3 introduces local conversation persistence and usage tracking while maintaining rigorous privacy safeguards:
+
+### Privacy by Design:
+1. **Prompt Retention Policy**:
+   - Users can toggle **Prompt Retention** in the Playground at any time.
+   - When retention is disabled, raw user prompts are excluded from IndexedDB persistence (recorded as `[Prompt omitted by retention policy]`), while leaving the active volatile session context intact.
+   - Operational telemetry (latency, token counts, error status) is still recorded to ensure cost and performance observability without storing sensitive user prompt text.
+2. **Strict Zero-Secret Persistence**:
+   - `transient_credential` and API keys are strictly excluded from `UsageEvent` and `Conversation` database schemas.
+   - Database serialization unit tests explicitly verify that secrets never enter IndexedDB object stores.
+3. **Independent Deletion Guarantees**:
+   - Deleting a conversation does **not** erase usage metrics or cost accounting records.
+   - Clearing usage analytics does **not** destroy conversation threads.
+   - Users retain independent, explicit controls to purge conversation history or analytics data locally.
+
 

@@ -18,6 +18,8 @@ import {
   Copy,
   Check,
   Sliders,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
@@ -29,8 +31,13 @@ import {
   GatewayChatRequest,
   StreamUsageEvent,
   StreamDoneEvent,
+  Conversation,
+  UsageEvent,
+  PricingSnapshot,
 } from '../types';
 import { streamChatCompletion } from '../services/api';
+import { calculateUsageCost, formatCost } from '../services/cost_accounting';
+import { ConversationSidebar } from '../components/playground/ConversationSidebar';
 
 interface TelemetryState {
   latency_ms?: number;
@@ -42,6 +49,11 @@ interface TelemetryState {
 export const PlaygroundPage: React.FC = () => {
   const [models, setModels] = useState<WorkspaceModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string>('');
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [retainPrompts, setRetainPrompts] = useState<boolean>(true);
+  const [showSidebar, setShowSidebar] = useState<boolean>(true);
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -61,6 +73,18 @@ export const PlaygroundPage: React.FC = () => {
   const [lastTelemetry, setLastTelemetry] = useState<TelemetryState | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
+  // Streaming lifecycle references for cancellation/error usage tracking
+  const currentRequestRef = useRef<{
+    requestId: string;
+    conversationId: string;
+    selectedModel: WorkspaceModel;
+    pricingSnapshot: PricingSnapshot;
+    startTime: number;
+    usage?: StreamUsageEvent;
+    assistantMsgId: string;
+    updatedMessages: ChatMessage[];
+  } | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -72,6 +96,20 @@ export const PlaygroundPage: React.FC = () => {
         setSelectedModelId(enabledModels[0].id);
       } else if (ms.length > 0) {
         setSelectedModelId(ms[0].id);
+      }
+
+      const convs = await workspaceRepo.getConversations();
+      setConversations(convs);
+
+      const settings = await workspaceRepo.getSettings();
+      setRetainPrompts(settings.retain_prompts);
+
+      if (convs.length > 0) {
+        setActiveConversationId(convs[0].id);
+        setMessages(convs[0].messages);
+        if (convs[0].model_id && ms.some((m) => m.id === convs[0].model_id)) {
+          setSelectedModelId(convs[0].model_id);
+        }
       }
     };
     load();
@@ -93,20 +131,121 @@ export const PlaygroundPage: React.FC = () => {
     setTimeout(() => setCopiedIndex(null), 2000);
   };
 
-  const handleClearChat = () => {
+  const handleNewChat = () => {
     if (isGenerating && abortController) {
       abortController.abort();
     }
+    setActiveConversationId(null);
     setMessages([]);
     setErrorMessage(null);
     setLastTelemetry(null);
   };
 
-  const handleStopGenerating = () => {
+  const handleSelectConversation = (id: string) => {
+    if (isGenerating && abortController) {
+      abortController.abort();
+    }
+    const conv = conversations.find((c) => c.id === id);
+    if (conv) {
+      setActiveConversationId(conv.id);
+      setMessages(conv.messages);
+      setErrorMessage(null);
+      setLastTelemetry(null);
+      if (conv.model_id && models.some((m) => m.id === conv.model_id)) {
+        setSelectedModelId(conv.model_id);
+      }
+    }
+  };
+
+  const handleRenameConversation = async (id: string, newTitle: string) => {
+    const conv = conversations.find((c) => c.id === id);
+    if (!conv) return;
+    const updated: Conversation = {
+      ...conv,
+      title: newTitle,
+      updated_at: new Date().toISOString(),
+    };
+    await workspaceRepo.saveConversation(updated);
+    setConversations((prev) => prev.map((c) => (c.id === id ? updated : c)));
+  };
+
+  const handleDeleteConversation = async (id: string) => {
+    await workspaceRepo.deleteConversation(id);
+    const updated = conversations.filter((c) => c.id !== id);
+    setConversations(updated);
+    if (activeConversationId === id) {
+      if (updated.length > 0) {
+        handleSelectConversation(updated[0].id);
+      } else {
+        handleNewChat();
+      }
+    }
+  };
+
+  const handleToggleRetention = async () => {
+    const newRetention = !retainPrompts;
+    setRetainPrompts(newRetention);
+    await workspaceRepo.saveSettings({ retain_prompts: newRetention });
+  };
+
+  const handleStopGenerating = async () => {
     if (abortController) {
       abortController.abort();
       setAbortController(null);
       setIsGenerating(false);
+
+      // Record cancellation usage event if request was underway
+      const req = currentRequestRef.current;
+      if (req) {
+        const latency = performance.now() - req.startTime;
+        const costCalc = calculateUsageCost({
+          promptTokens: req.usage?.prompt_tokens,
+          completionTokens: req.usage?.completion_tokens,
+          pricingSnapshot: req.pricingSnapshot,
+          executionLocation: req.selectedModel.execution_location,
+        });
+
+        const cancelEvent: UsageEvent = {
+          id: req.requestId,
+          request_id: req.requestId,
+          conversation_id: req.conversationId,
+          workspace_model_id: req.selectedModel.id,
+          model_display_name_snapshot: req.selectedModel.display_name,
+          provider_type: req.selectedModel.provider_type,
+          provider_model_id: req.selectedModel.provider_model_id,
+          execution_location: req.selectedModel.execution_location,
+          execution_mode: req.selectedModel.execution_mode,
+          prompt_tokens: req.usage?.prompt_tokens ?? null,
+          completion_tokens: req.usage?.completion_tokens ?? null,
+          total_tokens: req.usage?.total_tokens ?? null,
+          token_provenance: req.usage?.provenance || 'unavailable',
+          pricing_snapshot: req.pricingSnapshot,
+          pricing_provenance: costCalc.pricingProvenance,
+          cost_status: costCalc.costStatus,
+          estimated_cost_usd: costCalc.estimatedCostUsd,
+          latency_ms: Math.round(latency * 10) / 10,
+          finish_reason: 'cancelled',
+          success: false,
+          status: 'cancelled',
+          error_message: 'Request cancelled by user.',
+          routed_by: 'direct',
+          timestamp: new Date().toISOString(),
+        };
+
+        await workspaceRepo.recordUsageEvent(cancelEvent);
+
+        // Update conversation with cancelled status
+        const currentConv = conversations.find((c) => c.id === req.conversationId);
+        if (currentConv) {
+          const updatedConv: Conversation = {
+            ...currentConv,
+            messages: req.updatedMessages,
+            last_status: 'cancelled',
+            updated_at: new Date().toISOString(),
+          };
+          await workspaceRepo.saveConversation(updatedConv);
+        }
+      }
     }
   };
 
@@ -137,13 +276,38 @@ export const PlaygroundPage: React.FC = () => {
 
     setErrorMessage(null);
 
-    // Filter out previous empty assistant/system messages from history to ensure contract validity
+    // 1. Identify or initialize conversation
+    let convId = activeConversationId;
+    let currentConv = conversations.find((c) => c.id === convId);
+
+    const isNewConversation = !convId || !currentConv;
+    if (isNewConversation) {
+      convId = `conv-${Date.now()}`;
+      const title = prompt.trim().slice(0, 38) + (prompt.trim().length > 38 ? '...' : '');
+      currentConv = {
+        id: convId,
+        title,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        model_id: selectedModel.id,
+        model_display_name_snapshot: selectedModel.display_name,
+        messages: [],
+        last_status: 'in_progress',
+        usage_event_ids: [],
+      };
+      setActiveConversationId(convId);
+    }
+
+    // 2. Prepare user message respecting privacy retention policy
+    const userMessageContent = prompt.trim();
+    const persistedUserContent = retainPrompts ? userMessageContent : '[Prompt omitted by retention policy]';
+
     const validHistory = messages.filter((m) => m.content && m.content.trim().length > 0);
     const userMessage: ChatMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
-      content: prompt.trim(),
-      timestamp: new Date().toLocaleTimeString(),
+      content: userMessageContent,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
     const newMessages = [...validHistory, userMessage];
@@ -156,13 +320,36 @@ export const PlaygroundPage: React.FC = () => {
       id: assistantMsgId,
       role: 'assistant',
       content: '',
-      timestamp: new Date().toLocaleTimeString(),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      model_display_name: selectedModel.display_name,
     };
 
-    setMessages([...newMessages, initialAssistantMessage]);
+    const messagesWithPlaceholder = [...newMessages, initialAssistantMessage];
+    setMessages(messagesWithPlaceholder);
 
     const controller = new AbortController();
     setAbortController(controller);
+
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const startTime = performance.now();
+
+    // Capture immutable pricing snapshot at request start
+    const pricingSnapshot: PricingSnapshot = {
+      input_price_per_million: selectedModel.input_price_per_million,
+      output_price_per_million: selectedModel.output_price_per_million,
+      pricing_source: selectedModel.pricing_source,
+      is_free_tier: selectedModel.input_price_per_million === 0 && selectedModel.output_price_per_million === 0,
+    };
+
+    currentRequestRef.current = {
+      requestId,
+      conversationId: convId!,
+      selectedModel,
+      pricingSnapshot,
+      startTime,
+      assistantMsgId,
+      updatedMessages: messagesWithPlaceholder,
+    };
 
     const gatewayReq: GatewayChatRequest = {
       model_id: selectedModel.id,
@@ -181,6 +368,7 @@ export const PlaygroundPage: React.FC = () => {
       input_price_per_million: selectedModel.input_price_per_million,
       output_price_per_million: selectedModel.output_price_per_million,
       pricing_source: selectedModel.pricing_source,
+      request_id: requestId,
     };
 
     let accumulatedText = '';
@@ -200,22 +388,167 @@ export const PlaygroundPage: React.FC = () => {
           },
           onUsage: (usage: StreamUsageEvent) => {
             currentUsage = usage;
+            if (currentRequestRef.current) {
+              currentRequestRef.current.usage = usage;
+            }
             setLastTelemetry((prev) => ({ ...prev, usage }));
           },
-          onDone: (done: StreamDoneEvent) => {
+          onDone: async (done: StreamDoneEvent) => {
+            setIsGenerating(false);
+            setAbortController(null);
+
             setLastTelemetry({
               latency_ms: done.latency_ms,
               ttft_ms: done.ttft_ms,
               finish_reason: done.finish_reason,
               usage: currentUsage,
             });
-            setIsGenerating(false);
-            setAbortController(null);
+
+            // Calculate cost using verified accounting rules
+            const costCalc = calculateUsageCost({
+              promptTokens: currentUsage?.prompt_tokens,
+              completionTokens: currentUsage?.completion_tokens,
+              pricingSnapshot,
+              executionLocation: selectedModel.execution_location,
+            });
+
+            // Persist idempotent usage event
+            const successEvent: UsageEvent = {
+              id: requestId,
+              request_id: requestId,
+              conversation_id: convId!,
+              workspace_model_id: selectedModel.id,
+              model_display_name_snapshot: selectedModel.display_name,
+              provider_type: selectedModel.provider_type,
+              provider_model_id: selectedModel.provider_model_id,
+              execution_location: selectedModel.execution_location,
+              execution_mode: selectedModel.execution_mode,
+              prompt_tokens: currentUsage?.prompt_tokens ?? null,
+              completion_tokens: currentUsage?.completion_tokens ?? null,
+              total_tokens: currentUsage?.total_tokens ?? null,
+              token_provenance: currentUsage?.provenance || 'unavailable',
+              pricing_snapshot: pricingSnapshot,
+              pricing_provenance: costCalc.pricingProvenance,
+              cost_status: costCalc.costStatus,
+              estimated_cost_usd: costCalc.estimatedCostUsd,
+              latency_ms: done.latency_ms,
+              time_to_first_token_ms: done.ttft_ms ?? null,
+              finish_reason: done.finish_reason || 'stop',
+              success: true,
+              status: 'success',
+              routed_by: 'direct',
+              timestamp: new Date().toISOString(),
+            };
+
+            await workspaceRepo.recordUsageEvent(successEvent);
+
+            // Persist updated conversation
+            const finalAssistantMsg: ChatMessage = {
+              id: assistantMsgId,
+              role: 'assistant',
+              content: accumulatedText,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              model_display_name: selectedModel.display_name,
+              usage_event_id: requestId,
+              status: 'success',
+            };
+
+            const updatedMsgList = [
+              ...validHistory,
+              { ...userMessage, content: persistedUserContent },
+              finalAssistantMsg,
+            ];
+
+            const updatedConv: Conversation = {
+              ...(currentConv!),
+              id: convId!,
+              model_id: selectedModel.id,
+              model_display_name_snapshot: selectedModel.display_name,
+              messages: updatedMsgList,
+              last_status: 'completed',
+              updated_at: new Date().toISOString(),
+              usage_event_ids: Array.from(new Set([...(currentConv?.usage_event_ids || []), requestId])),
+            };
+
+            await workspaceRepo.saveConversation(updatedConv);
+            const freshConvs = await workspaceRepo.getConversations();
+            setConversations(freshConvs);
+            currentRequestRef.current = null;
           },
-          onError: (err: string) => {
+          onError: async (err: string) => {
             setErrorMessage(err);
             setIsGenerating(false);
             setAbortController(null);
+
+            const latency = performance.now() - startTime;
+            const costCalc = calculateUsageCost({
+              promptTokens: currentUsage?.prompt_tokens,
+              completionTokens: currentUsage?.completion_tokens,
+              pricingSnapshot,
+              executionLocation: selectedModel.execution_location,
+            });
+
+            const failEvent: UsageEvent = {
+              id: requestId,
+              request_id: requestId,
+              conversation_id: convId!,
+              workspace_model_id: selectedModel.id,
+              model_display_name_snapshot: selectedModel.display_name,
+              provider_type: selectedModel.provider_type,
+              provider_model_id: selectedModel.provider_model_id,
+              execution_location: selectedModel.execution_location,
+              execution_mode: selectedModel.execution_mode,
+              prompt_tokens: currentUsage?.prompt_tokens ?? null,
+              completion_tokens: currentUsage?.completion_tokens ?? null,
+              total_tokens: currentUsage?.total_tokens ?? null,
+              token_provenance: currentUsage?.provenance || 'unavailable',
+              pricing_snapshot: pricingSnapshot,
+              pricing_provenance: costCalc.pricingProvenance,
+              cost_status: costCalc.costStatus,
+              estimated_cost_usd: costCalc.estimatedCostUsd,
+              latency_ms: Math.round(latency * 10) / 10,
+              finish_reason: 'error',
+              success: false,
+              status: 'failed',
+              error_message: err,
+              error_category: 'upstream_error',
+              routed_by: 'direct',
+              timestamp: new Date().toISOString(),
+            };
+
+            await workspaceRepo.recordUsageEvent(failEvent);
+
+            const failAssistantMsg: ChatMessage = {
+              id: assistantMsgId,
+              role: 'assistant',
+              content: accumulatedText || 'Inference failed.',
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              model_display_name: selectedModel.display_name,
+              usage_event_id: requestId,
+              status: 'failed',
+            };
+
+            const updatedMsgList = [
+              ...validHistory,
+              { ...userMessage, content: persistedUserContent },
+              failAssistantMsg,
+            ];
+
+            const updatedConv: Conversation = {
+              ...(currentConv!),
+              id: convId!,
+              model_id: selectedModel.id,
+              model_display_name_snapshot: selectedModel.display_name,
+              messages: updatedMsgList,
+              last_status: 'failed',
+              updated_at: new Date().toISOString(),
+              usage_event_ids: Array.from(new Set([...(currentConv?.usage_event_ids || []), requestId])),
+            };
+
+            await workspaceRepo.saveConversation(updatedConv);
+            const freshConvs = await workspaceRepo.getConversations();
+            setConversations(freshConvs);
+            currentRequestRef.current = null;
           },
         },
         controller.signal
@@ -253,22 +586,31 @@ export const PlaygroundPage: React.FC = () => {
             Gateway Playground
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Real LLM chat completions with Server-Sent Events streaming, usage auditing, and latency tracking.
+            Real LLM chat completions with Server-Sent Events streaming, persistent conversations, and telemetry.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
-          {messages.length > 0 && (
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<RotateCcw className="w-3.5 h-3.5" />}
-              onClick={handleClearChat}
-              disabled={isGenerating}
-            >
-              New Chat
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            icon={showSidebar ? <PanelLeftClose className="w-3.5 h-3.5" /> : <PanelLeftOpen className="w-3.5 h-3.5" />}
+            onClick={() => setShowSidebar(!showSidebar)}
+            className="hidden lg:inline-flex"
+          >
+            {showSidebar ? 'Hide History' : 'Show History'}
+          </Button>
+
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<RotateCcw className="w-3.5 h-3.5" />}
+            onClick={handleNewChat}
+            disabled={isGenerating}
+          >
+            New Chat
+          </Button>
+
           <Link to="/studio">
             <Button size="sm" variant="secondary" icon={<Cpu className="w-3.5 h-3.5" />}>
               Model Studio ({models.length})
@@ -291,9 +633,27 @@ export const PlaygroundPage: React.FC = () => {
           </Link>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="flex flex-col lg:flex-row gap-6">
+          {/* Conversation History Sidebar */}
+          {showSidebar && (
+            <div className="w-full lg:w-72 shrink-0">
+              <ConversationSidebar
+                conversations={conversations}
+                activeId={activeConversationId}
+                onSelect={handleSelectConversation}
+                onNewChat={handleNewChat}
+                onRename={handleRenameConversation}
+                onDelete={handleDeleteConversation}
+                retainPrompts={retainPrompts}
+                onToggleRetention={handleToggleRetention}
+                isOpen={showSidebar}
+                onClose={() => setShowSidebar(false)}
+              />
+            </div>
+          )}
+
           {/* Main Chat Interface */}
-          <div className="lg:col-span-3 flex flex-col dev-card bg-dark-900/90 border border-dark-800 min-h-[620px] max-h-[820px]">
+          <div className="flex-1 flex flex-col dev-card bg-dark-900/90 border border-dark-800 min-h-[620px] max-h-[820px]">
             {/* Model & Config bar */}
             <div className="p-3.5 border-b border-dark-800 flex flex-wrap items-center justify-between gap-3 bg-dark-850/60 rounded-t-xl">
               <div className="flex items-center gap-2.5 flex-1 min-w-[240px]">
@@ -398,7 +758,9 @@ export const PlaygroundPage: React.FC = () => {
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-400">
                   <Sparkles className="w-8 h-8 text-brand-400/60 mb-2.5" />
-                  <p className="text-sm font-medium text-slate-200">Ready to chat with {selectedModel?.display_name || 'Model'}</p>
+                  <p className="text-sm font-medium text-slate-200">
+                    Ready to chat with {selectedModel?.display_name || 'Model'}
+                  </p>
                   <p className="text-xs text-slate-400 max-w-sm mt-1">
                     Type a prompt below to initiate real-time streaming inference via the TokenPilot gateway.
                   </p>
@@ -410,7 +772,12 @@ export const PlaygroundPage: React.FC = () => {
                     className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                   >
                     <div className="text-[10px] text-slate-400 mb-1 px-1 flex items-center gap-1.5">
-                      <span>{msg.role === 'user' ? 'You' : selectedModel?.display_name || 'Assistant'}</span>
+                      <span>{msg.role === 'user' ? 'You' : msg.model_display_name || selectedModel?.display_name || 'Assistant'}</span>
+                      {msg.model_display_name && (
+                        <Badge variant="neutral" className="text-[9px] py-0 px-1.5">
+                          {msg.model_display_name}
+                        </Badge>
+                      )}
                       {msg.timestamp && <span>• {msg.timestamp}</span>}
                     </div>
 
@@ -418,6 +785,8 @@ export const PlaygroundPage: React.FC = () => {
                       className={`relative group max-w-[85%] rounded-2xl px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap font-sans ${
                         msg.role === 'user'
                           ? 'bg-brand-600 text-white rounded-tr-none'
+                          : msg.status === 'failed'
+                          ? 'bg-rose-950/40 text-rose-200 border border-rose-800/60 rounded-tl-none font-mono'
                           : 'bg-dark-800/90 text-slate-100 border border-dark-750 rounded-tl-none font-mono'
                       }`}
                     >
@@ -492,8 +861,8 @@ export const PlaygroundPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Right Sidebar: Active Model Info & Transient Credential */}
-          <div className="space-y-4">
+          {/* Right Sidebar: Active Model Info, Token & Live Telemetry */}
+          <div className="w-full lg:w-80 shrink-0 space-y-4">
             {/* Transient Session Credential Card */}
             <div className="dev-card p-4 space-y-3 bg-dark-900 border border-dark-800">
               <div className="flex items-center justify-between">
@@ -539,7 +908,7 @@ export const PlaygroundPage: React.FC = () => {
                   Zero-Secret Policy
                 </div>
                 <p>
-                  Held in browser volatile session memory only. Never written to IndexedDB, localStorage, or logs. Cleared upon browser refresh.
+                  Held in browser volatile session memory only. Never written to IndexedDB, localStorage, or logs.
                 </p>
               </div>
             </div>
@@ -656,17 +1025,14 @@ export const PlaygroundPage: React.FC = () => {
                         </Badge>
                       </div>
 
-                      {lastTelemetry.usage.estimated_cost_usd !== null &&
-                        lastTelemetry.usage.estimated_cost_usd !== undefined && (
-                          <div className="flex justify-between items-center pt-1 border-t border-dark-800 text-emerald-400">
-                            <span className="flex items-center gap-1 font-medium">
-                              <Coins className="w-3 h-3" /> Cost:
-                            </span>
-                            <span className="font-mono font-medium">
-                              ${lastTelemetry.usage.estimated_cost_usd.toFixed(6)}
-                            </span>
-                          </div>
-                        )}
+                      <div className="flex justify-between items-center pt-1 border-t border-dark-800 text-emerald-400">
+                        <span className="flex items-center gap-1 font-medium">
+                          <Coins className="w-3 h-3" /> Estimated Cost:
+                        </span>
+                        <span className="font-mono font-medium">
+                          {formatCost(lastTelemetry.usage.estimated_cost_usd, lastTelemetry.usage.estimated_cost_usd !== null ? 'known' : 'unknown')}
+                        </span>
+                      </div>
                     </>
                   )}
                 </div>

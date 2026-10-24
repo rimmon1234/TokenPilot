@@ -86,28 +86,68 @@ Routing configuration rules per pool.
 - `retry_on_failure`: boolean
 - `max_retries`: integer
 
-### F. UsageEvent
-Request auditing, cost accounting, and latency telemetry.
-- `id`: string (UUID v4)
-- `workspace_model_id`: string
-- `model_display_name_snapshot`: string
+### F. UsageEvent (M3.3)
+Request auditing, cost accounting, and latency telemetry. Each gateway interaction produces an immutable, idempotent usage event:
+- `id`: string (UUID or matching `request_id`)
+- `request_id`: string (unique client/server correlation ID)
+- `conversation_id`: optional string (foreign key to `Conversation.id`)
+- `workspace_model_id`: string (ID of selected model configuration)
+- `model_display_name_snapshot`: string (immutable snapshot of model name)
+- `provider_type`: string (`ollama`, `huggingface`, `openai`, `vllm`)
+- `provider_model_id`: string (target upstream model identifier)
+- `execution_location`: `'local' | 'remote'`
+- `execution_mode`: ExecutionMode enum
 - `routing_pool_id`: optional string
-- `prompt_tokens`: integer
-- `completion_tokens`: integer
-- `total_tokens`: integer
-- `pricing_snapshot`: object (`{ input_price_per_million: number, output_price_per_million: number }`)
-- `estimated_cost_usd`: number
+- `prompt_tokens`: integer or null
+- `completion_tokens`: integer or null
+- `total_tokens`: integer or null
+- `token_provenance`: `'provider_reported' | 'estimated' | 'unavailable'`
+- `pricing_snapshot`: object:
+  - `input_price_per_million`: number or null
+  - `output_price_per_million`: number or null
+  - `pricing_source`: string (`official_docs`, `provider_averages`, `free_local`, `unknown`)
+  - `is_free_tier`: optional boolean
+- `pricing_provenance`: `'configured' | 'verified' | 'unknown'`
+- `cost_status`: `'known' | 'unknown'`
+- `estimated_cost_usd`: number or null
 - `latency_ms`: number
-- `time_to_first_token_ms`: optional number
+- `time_to_first_token_ms`: optional number or null
+- `finish_reason`: optional string (`stop`, `length`, `cancelled`, `error`)
 - `success`: boolean
+- `status`: `'success' | 'failed' | 'cancelled'`
 - `error_message`: optional string
+- `error_category`: optional string
 - `routed_by`: string (`'direct' | 'ml_router' | 'fallback' | 'cost_rule'`)
 - `timestamp`: string (ISO 8601)
 
-### G. Conversation and Message
-Conversation structures for interactive chat.
-- `Conversation`: `id`, `title`, `workspace_id`, `created_at`, `updated_at`
-- `Message`: `id`, `conversation_id`, `role` (`'system' | 'user' | 'assistant'`), `content`, `usage_event_id`, `timestamp`
+#### Cost Accounting Formula
+$$\text{estimated\_cost} = \frac{\text{prompt\_tokens} \times \text{input\_price\_per\_million} + \text{completion\_tokens} \times \text{output\_price\_per\_million}}{1,000,000}$$
+- **Remote Models**: Calculated only when token counts and price card rates are non-negative numbers.
+- **Local Models**: Marked as `cost_status: 'unknown'` and `estimated_cost_usd: null` by default, because local compute has real electricity/hardware costs and must not be falsely claimed as $0.00 free spend.
+- **Promotional Free Tier**: Explicitly configured zero pricing is preserved as $0.00 with `cost_status: 'known'`, distinct from missing prices.
+
+### G. Conversation and ChatMessage (M3.3)
+Interactive conversation threads persisted locally in browser IndexedDB:
+- **`Conversation`**:
+  - `id`: string (UUID e.g. `conv-1730000000000`)
+  - `title`: string (auto-derived from initial prompt or user-edited)
+  - `created_at`: string (ISO 8601)
+  - `updated_at`: string (ISO 8601)
+  - `model_id`: optional string (reference to last active model)
+  - `model_display_name_snapshot`: optional string (model name attribution snapshot)
+  - `messages`: array of `ChatMessage`
+  - `last_status`: optional `'completed' | 'failed' | 'cancelled' | 'in_progress'`
+  - `usage_event_ids`: optional array of string IDs linking to associated `UsageEvent` records
+- **`ChatMessage`**:
+  - `id`: optional string
+  - `role`: `'system' | 'user' | 'assistant'`
+  - `content`: string (or masked if prompt retention is disabled)
+  - `timestamp`: optional string
+  - `model_display_name`: optional string (assistant model attribution)
+  - `usage_event_id`: optional string
+  - `status`: optional `'success' | 'failed' | 'cancelled'`
+- **`WorkspaceSettings`**:
+  - `retain_prompts`: boolean (default `true`). When toggled to `false`, raw prompts are excluded from persistence to protect sensitive queries.
 
 ### H. BenchmarkRun & BenchmarkResult
 Reproducible evaluation of models and routing policies.

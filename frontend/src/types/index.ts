@@ -151,24 +151,45 @@ export interface HFSearchResponse {
   error?: string;
 }
 
+export type RequestStatus = 'success' | 'failed' | 'cancelled';
+export type CostStatus = 'known' | 'unknown';
+export type PricingProvenance = 'configured' | 'verified' | 'unknown';
+
+export interface PricingSnapshot {
+  input_price_per_million: number | null;
+  output_price_per_million: number | null;
+  pricing_source: string;
+  is_free_tier?: boolean;
+}
+
+export type TokenProvenance = 'provider_reported' | 'estimated' | 'unavailable';
+
 export interface UsageEvent {
   id: string;
+  request_id: string;
+  conversation_id?: string;
   workspace_model_id: string;
   model_display_name_snapshot: string;
+  provider_type: string;
+  provider_model_id: string;
+  execution_location: ExecutionLocation;
+  execution_mode: ExecutionMode;
   routing_pool_id?: string;
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  pricing_snapshot: {
-    input_price_per_million: number;
-    output_price_per_million: number;
-    pricing_source: string;
-  };
-  estimated_cost_usd: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  token_provenance: TokenProvenance;
+  pricing_snapshot: PricingSnapshot;
+  pricing_provenance: PricingProvenance;
+  cost_status: CostStatus;
+  estimated_cost_usd: number | null;
   latency_ms: number;
-  time_to_first_token_ms?: number;
+  time_to_first_token_ms?: number | null;
+  finish_reason?: string | null;
   success: boolean;
-  error_message?: string;
+  status: RequestStatus;
+  error_message?: string | null;
+  error_category?: string | null;
   routed_by: string;
   timestamp: string;
 }
@@ -181,9 +202,26 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   timestamp?: string;
+  model_display_name?: string;
+  usage_event_id?: string;
+  status?: 'success' | 'failed' | 'cancelled';
 }
 
-export type TokenProvenance = 'provider_reported' | 'estimated' | 'unavailable';
+export interface Conversation {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  model_id?: string;
+  model_display_name_snapshot?: string;
+  messages: ChatMessage[];
+  last_status?: 'completed' | 'failed' | 'cancelled' | 'in_progress';
+  usage_event_ids?: string[];
+}
+
+export interface WorkspaceSettings {
+  retain_prompts: boolean;
+}
 
 export interface GatewayChatRequest {
   model_id?: string;

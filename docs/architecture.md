@@ -182,4 +182,47 @@ sequenceDiagram
 - **Time-To-First-Token (TTFT) & Latency Auditing**: Captures high-precision monotonic timing (`time.perf_counter()`) measuring initial chunk latency and end-to-end response duration.
 - **Clean Stream Cancellation**: Client cancellations cleanly invoke `AbortSignal`, cancelling the `ReadableStream` reader and terminating upstream generation.
 
+---
+
+## 7. Persistent Usage, Conversation History & Cost Analytics (M3.3)
+
+Milestone M3.3 transitions session-ephemeral telemetry into an auditable, persistent local workspace:
+
+```mermaid
+flowchart TD
+    subgraph UI ["Gateway Playground & Analytics"]
+        Playground["Playground Chat Interface"]
+        ConvSidebar["Conversation Sidebar"]
+        AnalyticsView["Analytics Dashboard"]
+    end
+
+    subgraph StorageLayer ["IndexedDB Storage Layer (idb v2)"]
+        Repo["IndexedDBWorkspaceRepository"]
+        ConvStore[("conversations store")]
+        UsageStore[("usage_events store")]
+        MetaStore[("meta store (settings)")]
+    end
+
+    subgraph Engine ["Cost & Metrics Engine"]
+        CostCalc["calculateUsageCost()"]
+        Aggregator["Analytics Metric Aggregator"]
+    end
+
+    Playground -->|Record Stream Completion / Error / Cancel| Repo
+    Playground -->|Prompt Retention Policy| MetaStore
+    ConvSidebar <-->|List / Rename / Delete / Reload| ConvStore
+    Repo -->|Idempotent Put by request_id| UsageStore
+    Repo -->|Put conversation| ConvStore
+    CostCalc -->|Verified Snapshot & Formula| Repo
+    UsageStore --> Aggregator
+    Aggregator --> AnalyticsView
+```
+
+### Key Architectural Tenets:
+1. **Idempotent Telemetry Deduplication**: Requests are keyed by unique `request_id`. Multiple streaming chunks (e.g. usage followed by done) update the usage record idempotently without duplicating request counts.
+2. **Immutable Pricing Snapshots**: Pricing attributes are captured at request dispatch from the active `WorkspaceModel`. Subsequent edits or deletion of model price cards never alter historical records.
+3. **Decoupled Lifecycle**: Deleting a model from the workspace preserves historical conversations and usage telemetry. Deleting a conversation does not erase usage metrics.
+4. **Verified Cost Accounting**: Local compute is never claimed to be $0.00 "free". Unpriced or missing rates produce `unknown` cost status rather than false zero totals.
+5. **Zero-Secret Enforcement**: Transient API tokens never enter IndexedDB or serialized chat history. Raw prompt retention can be toggled by the user without compromising metric capture.
+
 

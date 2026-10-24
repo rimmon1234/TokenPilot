@@ -89,6 +89,39 @@ async def cancel_benchmark_run(run_id: str):
     return {"status": "cancelled", "run_id": run_id}
 
 
+@router.delete("/runs/{run_id}")
+async def delete_benchmark_run(run_id: str):
+    """
+    Permanently delete a completed or stopped benchmark run and its results.
+    Active (running/pending) runs cannot be deleted; cancel them first.
+    """
+    run = benchmark_runner.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Benchmark run '{run_id}' not found.",
+        )
+
+    if run.status in ["running", "pending"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete an active benchmark run (current status: '{run.status}'). Cancel the run first.",
+        )
+
+    # Remove from runner memory cache if present
+    if run_id in benchmark_runner._active_runs:
+        del benchmark_runner._active_runs[run_id]
+
+    deleted = benchmark_storage.delete_run(run_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Benchmark run '{run_id}' files not found on disk.",
+        )
+
+    return {"status": "deleted", "run_id": run_id}
+
+
 @router.post("/runs/{run_id}/score", response_model=BenchmarkRun)
 async def score_benchmark_run(run_id: str):
     """

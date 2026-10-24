@@ -149,3 +149,23 @@ export async function downloadBenchmarkReport(
   }
 }
 
+export async function deleteBenchmarkRun(runId: string): Promise<void> {
+  const url = `${API_BASE}/benchmarks/runs/${encodeURIComponent(runId)}`;
+  const res = await fetch(url, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    let errorDetail = `Failed to delete benchmark run (HTTP ${res.status})`;
+    try {
+      const errJson = await res.json();
+      if (errJson && errJson.detail) {
+        errorDetail = errJson.detail;
+      }
+    } catch {
+      // fallback
+    }
+    throw new Error(errorDetail);
+  }
+}
+
+

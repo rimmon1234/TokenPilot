@@ -372,3 +372,78 @@ def test_export_benchmark_run_csv(api_client):
 def test_export_benchmark_run_not_found(api_client):
     res = api_client.get("/api/benchmarks/runs/nonexistent-run-id/export?format=json")
     assert res.status_code == 404
+
+
+def test_delete_benchmark_run_success(api_client):
+    """Verify deleting a completed run deletes files and returns 200."""
+    run_id = "run-to-delete-123"
+    run = BenchmarkRun(
+        id=run_id,
+        dataset_manifest_id="ds-gsm8k",
+        dataset_name="GSM8K",
+        dataset_id="gsm8k",
+        dataset_revision="abc1234",
+        source_split="test",
+        task_type=TaskType.MATH_REASONING,
+        model_ids=["m1"],
+        model_configs=[
+            BenchmarkModelConfig(
+                model_id="m1",
+                display_name="Model One",
+                provider_type="ollama",
+                execution_mode="local_openai_compatible",
+                provider_model_id="llama3.2:3b",
+            )
+        ],
+        status=BenchmarkRunStatus.COMPLETED,
+    )
+    benchmark_storage.save_run(run)
+    benchmark_storage.save_results_atomic(run_id, [])
+    benchmark_runner._active_runs[run_id] = run
+
+    # Verify exists
+    assert benchmark_storage.get_run(run_id) is not None
+
+    # Call DELETE endpoint
+    res = api_client.delete(f"/api/benchmarks/runs/{run_id}")
+    assert res.status_code == 200
+    assert res.json() == {"status": "deleted", "run_id": run_id}
+
+    # Verify no longer exists
+    assert benchmark_storage.get_run(run_id) is None
+    assert run_id not in benchmark_runner._active_runs
+
+
+def test_delete_active_benchmark_run_rejected(api_client):
+    """Active (running or pending) runs cannot be deleted; returns 400."""
+    run_id = "run-active-cannot-delete"
+    run = BenchmarkRun(
+        id=run_id,
+        dataset_manifest_id="ds-gsm8k",
+        dataset_name="GSM8K",
+        dataset_id="gsm8k",
+        dataset_revision="abc1234",
+        source_split="test",
+        task_type=TaskType.MATH_REASONING,
+        model_ids=["m1"],
+        model_configs=[],
+        status=BenchmarkRunStatus.RUNNING,
+    )
+    benchmark_storage.save_run(run)
+    benchmark_runner._active_runs[run_id] = run
+
+    try:
+        res = api_client.delete(f"/api/benchmarks/runs/{run_id}")
+        assert res.status_code == 400
+        assert "Cannot delete an active benchmark run" in res.json()["detail"]
+    finally:
+        # Cleanup
+        benchmark_storage.delete_run(run_id)
+        benchmark_runner._active_runs.pop(run_id, None)
+
+
+def test_delete_benchmark_run_not_found(api_client):
+    """Deleting nonexistent run returns 404."""
+    res = api_client.delete("/api/benchmarks/runs/nonexistent-run")
+    assert res.status_code == 404
+

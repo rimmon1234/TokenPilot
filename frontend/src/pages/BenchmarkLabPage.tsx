@@ -59,6 +59,7 @@ import {
   cancelBenchmarkRun,
   scoreBenchmarkRun,
   downloadBenchmarkReport,
+  deleteBenchmarkRun,
 } from '../services/benchmark_service';
 import { workspaceRepo } from '../storage/indexeddb_repository';
 
@@ -272,6 +273,23 @@ export const BenchmarkLabPage: React.FC = () => {
       setErrorBanner(`Failed to score benchmark run: ${err.message}`);
     } finally {
       setScoringRunId(null);
+    }
+  };
+
+  const handleDeleteRun = async (runId: string) => {
+    if (!window.confirm(`Are you sure you want to permanently delete benchmark run '${runId}' and its evaluation records?`)) {
+      return;
+    }
+    try {
+      await deleteBenchmarkRun(runId);
+      setBenchmarkRuns((prev) => prev.filter((r) => r.id !== runId));
+      if (selectedComparisonRunId === runId) {
+        const remaining = benchmarkRuns.filter((r) => r.id !== runId);
+        setSelectedComparisonRunId(remaining.length > 0 ? remaining[0].id : null);
+      }
+      setSuccessBanner(`Successfully deleted benchmark run '${runId}'.`);
+    } catch (err: any) {
+      setErrorBanner(`Failed to delete benchmark run: ${err.message}`);
     }
   };
 
@@ -912,6 +930,13 @@ export const BenchmarkLabPage: React.FC = () => {
                             <Eye className="w-3.5 h-3.5 text-slate-400" />
                             View Results
                           </button>
+                          <button
+                            onClick={() => handleDeleteRun(run.id)}
+                            className="p-1.5 text-slate-400 hover:text-red-400 rounded hover:bg-red-500/10 transition-colors"
+                            title="Delete benchmark run"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </>
                       )}
                     </div>
@@ -1013,6 +1038,17 @@ export const BenchmarkLabPage: React.FC = () => {
                 )}
                 Export CSV
               </button>
+
+              {selectedComparisonRun && (
+                <button
+                  onClick={() => handleDeleteRun(selectedComparisonRun.id)}
+                  className="dev-btn-secondary text-xs px-3 py-2 flex items-center gap-1.5 hover:border-red-500/50 hover:text-red-400 text-slate-400"
+                  title="Delete this benchmark run and its results"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-400" />
+                  Delete Run
+                </button>
+              )}
             </div>
           </div>
 

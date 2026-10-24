@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   exportBenchmarkRun,
   downloadBenchmarkReport,
+  deleteBenchmarkRun,
 } from '../services/benchmark_service';
 import {
   BenchmarkRunScoringSummary,
@@ -190,4 +191,30 @@ describe('Benchmark Comparison & Reports Client', () => {
     expect(beta.cost_per_question_usd).toBe(0.00033);
     expect(beta.is_pareto_efficient).toBe(true);
   });
+
+  it('deleteBenchmarkRun sends DELETE request and handles success', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'deleted', run_id: 'run-123' }),
+    } as Response);
+
+    await deleteBenchmarkRun('run-123');
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/benchmarks/runs/run-123'),
+      expect.objectContaining({ method: 'DELETE' })
+    );
+  });
+
+  it('deleteBenchmarkRun throws error on non-ok status', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({ detail: 'Cannot delete an active benchmark run.' }),
+    } as Response);
+
+    await expect(deleteBenchmarkRun('run-active')).rejects.toThrow(
+      'Cannot delete an active benchmark run.'
+    );
+  });
 });
+

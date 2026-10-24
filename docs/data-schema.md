@@ -114,8 +114,35 @@ Reproducible evaluation of models and routing policies.
 - `BenchmarkRun`: `id`, `dataset_name`, `dataset_version`, `model_ids` (array), `status`, `started_at`, `completed_at`
 - `BenchmarkResult`: `id`, `run_id`, `model_id`, `prompt_id`, `score`, `metric_name`, `latency_ms`, `cost_usd`, `output_text`
 
+### I. Gateway Chat & Streaming Events (M3.2)
+Schemas governing `POST /api/gateway/chat/completions` and Server-Sent Events:
+- **`GatewayChatRequest`**:
+  - `model_id`: optional string (workspace reference)
+  - `model_display_name`: optional string
+  - `provider_type`: string (`ollama`, `vllm`, `huggingface`, `openai`)
+  - `execution_mode`: ExecutionMode enum
+  - `provider_model_id`: string (e.g. `llama3.2:3b`, `Qwen/Qwen2.5-Coder-7B-Instruct`)
+  - `base_url`: optional string (validated against SSRF)
+  - `messages`: array of `ChatMessage` (`role: 'system' | 'user' | 'assistant'`, `content: string`)
+  - `temperature`: float (`0.0` - `2.0`)
+  - `max_tokens`: optional integer (`1` - `128000`)
+  - `top_p`: optional float (`0.0` - `1.0`)
+  - `stream`: boolean (default `true`)
+  - `transient_credential`: optional `SecretStr` (held in memory only; never persisted or logged)
+  - `input_price_per_million`: optional float
+  - `output_price_per_million`: optional float
+  - `pricing_source`: optional string
+  - `request_id`: optional string
+- **Server-Sent Events (`text/event-stream`)**:
+  - `meta`: `{"type": "meta", "request_id": string, "model_id": string, "provider_model_id": string, "provider_type": string, "execution_mode": string}`
+  - `token`: `{"type": "token", "text": string}`
+  - `usage`: `{"type": "usage", "prompt_tokens": int, "completion_tokens": int, "total_tokens": int, "provenance": "provider_reported" | "estimated" | "unavailable", "estimated_cost_usd": float}`
+  - `done`: `{"type": "done", "finish_reason": string, "latency_ms": float, "ttft_ms": float}`
+  - `error`: `{"type": "error", "error": string, "code": string}`
+
 ---
 
 ## 2. Multi-Tenant Future Proofing
 
 All entity definitions include an optional `workspace_id` and `user_id` in their database mapping layer. In Milestone M7 (Authentication & Cloud Sync), row-level tenancy will be enforced via JWT session claims without breaking frontend contracts.
+

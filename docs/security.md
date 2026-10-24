@@ -62,6 +62,29 @@ Milestone M3.1 introduces model connection testing (`POST /api/models/test-conne
 ### Transient Credential Handling:
 - Test tokens provided in connection requests are modeled using Pydantic's `SecretStr`.
 - Secrets are held only in memory during the asynchronous execution of the test probe.
-- Upstream `Authorization` headers, raw error traces, and API keys are redacted from logs and stripped from API responses.
 - The browser interface stores only sanitized diagnostic metadata (latency, status, timestamp) in IndexedDB; the test token is never persisted.
+
+---
+
+## 5. Live Inference Gateway Security (Milestone M3.2)
+
+With Milestone M3.2 adding live streaming chat completion (`POST /api/gateway/chat/completions`), security policies ensure that credentials and user prompts are guarded against accidental exposure:
+
+### Ephemeral Session Credential Lifecycle
+1. **Volatile Browser Memory Only**:
+   - In the Playground UI, API tokens (e.g. Hugging Face user tokens, OpenAI API keys) reside strictly in React component state for the active tab session.
+   - Credentials are **never** saved to `localStorage`, `sessionStorage`, `IndexedDB`, or cookies.
+   - Refreshing or closing the browser window instantly clears all tokens from memory.
+   - A one-click "Clear Session Token" button allows users to immediately purge the in-memory credential.
+2. **Backend Ephemeral Handling**:
+   - The gateway accepts transient credentials as Pydantic `SecretStr`.
+   - Credentials are read only in-memory when constructing upstream request headers (`Authorization: Bearer <secret>`).
+   - Upstream headers and credentials are never emitted into Server-Sent Events, never printed in application logs, and never returned in error responses.
+3. **No Retries on Partial Failures**:
+   - The gateway does not automatically retry completion requests after partial tokens have streamed, preventing duplicate billable generation cycles.
+4. **Outbound Protection & SSRF Prevention**:
+   - Outbound endpoint URLs are validated through `app.core.network_validator.validate_outbound_url`.
+   - Target endpoints are restricted to valid HTTP/HTTPS URLs. Private RFC 1918 networks and cloud instance metadata services (`169.254.169.254`) are blocked in production deployments.
+   - For deployed applications, credentials must only be transmitted over TLS (HTTPS). Plain HTTP is restricted to development mode.
+
 

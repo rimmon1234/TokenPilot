@@ -4,6 +4,9 @@ import {
   WorkspaceModel,
   ConnectionTestRequest,
   ConnectionTestResult,
+  GatewayChatRequest,
+  StreamCallbacks,
+  StreamEvent,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
@@ -107,5 +110,113 @@ export async function testModelConnection(
   }
 
   return await res.json();
+}
+
+export async function streamChatCompletion(
+  request: GatewayChatRequest,
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/gateway/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => null);
+    const msg =
+      errData?.detail?.[0]?.msg ||
+      errData?.detail ||
+      errData?.message ||
+      `Gateway returned HTTP ${res.status}`;
+    callbacks.onError?.(msg, `http_${res.status}`);
+    throw new Error(msg);
+  }
+
+  if (!res.body) {
+    throw new Error('ReadableStream is not supported by this browser environment or response has no body.');
+  }
+
+  const reader = res.body.getReader();
+  const onAbort = () => {
+    reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        break;
+      }
+      const { done, value } = await reader.read();
+      if (done || signal?.aborted) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+
+      while (buffer.includes('\n\n')) {
+        const delimiterIndex = buffer.indexOf('\n\n');
+        const block = buffer.slice(0, delimiterIndex);
+        buffer = buffer.slice(delimiterIndex + 2);
+
+        const lines = block.split('\n');
+        const dataLines: string[] = [];
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line || line.startsWith(':')) {
+            continue; // keep-alive or comment
+          }
+          if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trim());
+          }
+        }
+
+        if (dataLines.length === 0) continue;
+
+        const dataStr = dataLines.join(' ');
+        try {
+          const event: StreamEvent = JSON.parse(dataStr);
+          switch (event.type) {
+            case 'meta':
+              callbacks.onMeta?.(event);
+              break;
+            case 'token':
+              callbacks.onToken?.(event.text);
+              break;
+            case 'usage':
+              callbacks.onUsage?.(event);
+              break;
+            case 'done':
+              callbacks.onDone?.(event);
+              break;
+            case 'error':
+              callbacks.onError?.(event.error, event.code);
+              break;
+          }
+        } catch {
+          // ignore malformed SSE line
+        }
+
+        if (signal?.aborted) {
+          break;
+        }
+      }
+    }
+  } catch (err: any) {
+    if (signal?.aborted || err?.name === 'AbortError') {
+      return;
+    }
+    callbacks.onError?.(err?.message || 'Streaming failed', 'stream_error');
+    throw err;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    reader.releaseLock();
+  }
 }
 

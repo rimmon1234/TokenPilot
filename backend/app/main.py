@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.api import hf_router, models_router, pools_router
+from app.api import hf_router, models_router, pools_router, gateway_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,6 +32,7 @@ app.add_middleware(
 app.include_router(hf_router, prefix="/api")
 app.include_router(models_router, prefix="/api")
 app.include_router(pools_router, prefix="/api")
+app.include_router(gateway_router, prefix="/api")
 
 
 @app.get("/api/health", tags=["Health"])

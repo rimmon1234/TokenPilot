@@ -42,6 +42,17 @@ from app.schemas.evaluation import (
     BenchmarkRunBase,
     BenchmarkRun,
 )
+from app.schemas.gateway import (
+    MessageRole,
+    ChatMessage,
+    TokenProvenance,
+    GatewayChatRequest,
+    StreamMetaEvent,
+    StreamTokenEvent,
+    StreamUsageEvent,
+    StreamDoneEvent,
+    StreamErrorEvent,
+)
 
 __all__ = [
     "ExecutionMode",
@@ -79,4 +90,13 @@ __all__ = [
     "BenchmarkResult",
     "BenchmarkRunBase",
     "BenchmarkRun",
+    "MessageRole",
+    "ChatMessage",
+    "TokenProvenance",
+    "GatewayChatRequest",
+    "StreamMetaEvent",
+    "StreamTokenEvent",
+    "StreamUsageEvent",
+    "StreamDoneEvent",
+    "StreamErrorEvent",
 ]

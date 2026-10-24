@@ -172,3 +172,89 @@ export interface UsageEvent {
   routed_by: string;
   timestamp: string;
 }
+
+// Gateway Chat & Streaming Types
+export type MessageRole = 'system' | 'user' | 'assistant';
+
+export interface ChatMessage {
+  id?: string;
+  role: MessageRole;
+  content: string;
+  timestamp?: string;
+}
+
+export type TokenProvenance = 'provider_reported' | 'estimated' | 'unavailable';
+
+export interface GatewayChatRequest {
+  model_id?: string;
+  model_display_name?: string;
+  provider_type: string;
+  execution_mode: ExecutionMode;
+  execution_location?: ExecutionLocation;
+  provider_model_id: string;
+  base_url?: string;
+  huggingface_repo_id?: string;
+  provider_selection?: string;
+  messages: { role: MessageRole; content: string }[];
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number;
+  stream?: boolean;
+  transient_credential?: string;
+  input_price_per_million?: number;
+  output_price_per_million?: number;
+  pricing_source?: string;
+  request_id?: string;
+}
+
+export interface StreamMetaEvent {
+  type: 'meta';
+  request_id: string;
+  model_id?: string;
+  provider_model_id: string;
+  provider_type: string;
+  execution_mode: string;
+}
+
+export interface StreamTokenEvent {
+  type: 'token';
+  text: string;
+}
+
+export interface StreamUsageEvent {
+  type: 'usage';
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  total_tokens?: number | null;
+  provenance: TokenProvenance;
+  estimated_cost_usd?: number | null;
+}
+
+export interface StreamDoneEvent {
+  type: 'done';
+  finish_reason?: string;
+  latency_ms: number;
+  ttft_ms?: number | null;
+}
+
+export interface StreamErrorEvent {
+  type: 'error';
+  error: string;
+  code?: string;
+}
+
+export type StreamEvent =
+  | StreamMetaEvent
+  | StreamTokenEvent
+  | StreamUsageEvent
+  | StreamDoneEvent
+  | StreamErrorEvent;
+
+export interface StreamCallbacks {
+  onMeta?: (meta: StreamMetaEvent) => void;
+  onToken?: (token: string) => void;
+  onUsage?: (usage: StreamUsageEvent) => void;
+  onDone?: (done: StreamDoneEvent) => void;
+  onError?: (error: string, code?: string) => void;
+}
+

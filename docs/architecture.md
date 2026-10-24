@@ -130,6 +130,56 @@ sequenceDiagram
 ### Architectural Highlights:
 - **Stateless Gateway Testing**: Works seamlessly with client-side IndexedDB persistence by accepting a nonsecret configuration payload and optional ephemeral token.
 - **SSRF Defense-in-Depth**: All candidate outbound endpoints undergo hostname DNS resolution, link-local metadata filtering (`169.254.169.254`), and environment-controlled LAN filtering before HTTP dispatch.
-- **Truthful Status Taxonomy**: Distinguishes `connected` (endpoint reachable and authenticated or catalog verified), `authentication_failed`, `unreachable`, `configuration_error`, and `unsupported` / inconclusive.
 - **Inference Verification Separation**: Non-generative catalog or health queries do not claim `inference_verified=true`; verification flags represent empirical reality rather than speculative assumptions.
+
+---
+
+## 6. LLM Inference Gateway & Streaming Engine (Milestone M3.2)
+
+Milestone M3.2 delivers live chat completions streaming across all supported provider runtimes via `POST /api/gateway/chat/completions`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Developer (Playground UI)
+    participant Client as StreamChatClient (Fetch/ReadableStream)
+    participant API as FastAPI Gateway Router
+    participant Reg as AdapterRegistry
+    participant Adapter as ProviderAdapter (OpenAI / HF)
+    participant Upstream as Target LLM Runtime (Ollama / HF Router)
+
+    User->>Client: Submit Chat Prompt
+    Client->>API: POST /api/gateway/chat/completions (SSE Request)
+    API->>Reg: get_adapter_for_mode(execution_mode)
+    Reg-->>API: ProviderAdapter instance
+    API->>Adapter: validate_configuration(request)
+    alt Invalid Config or Disallowed Destination
+        Adapter-->>API: (False, error_msg)
+        API-->>Client: 422 Unprocessable Content
+    else Valid Config
+        API-->>Client: 200 OK (text/event-stream)
+        API-->>Client: data: {"type": "meta", "request_id": "..."}
+        API->>Adapter: open_chat_stream(request, credential)
+        Adapter->>Upstream: POST /chat/completions (stream=true)
+        loop Token Streaming
+            Upstream-->>Adapter: SSE Chunk (delta.content)
+            Adapter-->>API: Normalized Token
+            API-->>Client: data: {"type": "token", "text": "..."}
+            Client-->>User: Render text delta incrementally
+        end
+        Upstream-->>Adapter: Final Usage Chunk
+        Adapter-->>API: Normalized Usage + Calculated Cost
+        API-->>Client: data: {"type": "usage", ...}
+        Adapter-->>API: Done (latency_ms, ttft_ms)
+        API-->>Client: data: {"type": "done", ...}
+        Client-->>User: Display latency & token telemetry
+    end
+```
+
+### Architectural Highlights:
+- **Unified Provider Adapter Pattern**: `BaseProviderAdapter` contract decouples provider-specific formats from gateway endpoints, enabling new providers to be introduced without modifying the frontend or router.
+- **Normalized Server-Sent Events**: Strict application-level event types (`meta`, `token`, `usage`, `done`, `error`) isolate the frontend from raw upstream chunk variability.
+- **Time-To-First-Token (TTFT) & Latency Auditing**: Captures high-precision monotonic timing (`time.perf_counter()`) measuring initial chunk latency and end-to-end response duration.
+- **Clean Stream Cancellation**: Client cancellations cleanly invoke `AbortSignal`, cancelling the `ReadableStream` reader and terminating upstream generation.
+
 

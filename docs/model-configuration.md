@@ -82,3 +82,33 @@ TokenPilot enables developers to actively test endpoint reachability and credent
   - In local development mode, loopback (`localhost`, `127.0.0.1`) and local LAN addresses are permitted for local runtimes like Ollama and vLLM.
   - Cloud instance metadata addresses (`169.254.169.254`) are strictly blocked across all environments.
 
+---
+
+## 5. LLM Inference Gateway & Execution Modes (Milestone M3.2)
+
+TokenPilot M3.2 delivers live chat completions streaming through a unified gateway abstraction (`POST /api/gateway/chat/completions`).
+
+### Supported Execution Modes & Provider Adapters
+
+1. **Local OpenAI-Compatible Runtimes (`local_openai_compatible`)**:
+   - Targets local servers like Ollama (`http://localhost:11434/v1`), vLLM (`http://localhost:8000/v1`), LM Studio, or LocalAI.
+   - Respects the configured `base_url` and `provider_model_id`.
+   - Probes `{base_url}/chat/completions` with optional local auth tokens.
+
+2. **Remote OpenAI-Compatible Endpoints (`remote_openai_compatible`)**:
+   - Integrates remote APIs (e.g., OpenAI, Together AI, Groq, Mistral) via custom base URLs.
+   - Enforces SSRF outbound IP filtering and accepts session-transient Bearer tokens.
+
+3. **Hugging Face Inference Providers (`huggingface_inference_providers`)**:
+   - Uses the official Hugging Face OpenAI-compatible router endpoint: `https://router.huggingface.co/v1/chat/completions`.
+   - Authenticates using user-supplied transient Hugging Face tokens (`Authorization: Bearer <token>`).
+   - Supports optional provider selection headers (`X-HF-Provider: <provider>`) for targeted routing (e.g. Together, SambaNova, Novita).
+
+4. **Hugging Face Dedicated Endpoints (`huggingface_inference_endpoint`)**:
+   - Targets customer-deployed dedicated containers (e.g., `https://<id>.endpoints.huggingface.cloud/v1/chat/completions`).
+   - Rejects Hugging Face Hub model page URLs, requiring an active deployed endpoint URL.
+
+5. **Direct Local Transformers (`huggingface_local_transformers`)**:
+   - *Architecture Limitation*: Direct in-process weights loading using Python `transformers` is intentionally unsupported in this milestone. This prevents multi-gigabyte model weights from saturating memory inside the FastAPI gateway process. Users are instructed to serve the weights through an external runtime like Ollama or vLLM.
+
+

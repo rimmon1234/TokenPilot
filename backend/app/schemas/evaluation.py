@@ -31,6 +31,12 @@ class BenchmarkModelConfig(BaseModel):
     output_price_per_million: Optional[float] = Field(None, description="Output price snapshot.")
     pricing_source: Optional[str] = Field(None, description="Pricing origin.")
     pricing_snapshot: Optional[PricingSnapshot] = Field(None, description="Captured pricing snapshot.")
+    model_source: Optional[str] = Field(None, description="Model origin e.g. huggingface_hub, ollama_library, custom")
+    source_repo_id: Optional[str] = Field(None, description="Original repository identifier if applicable")
+    execution_provider: Optional[str] = Field(None, description="Actual execution provider e.g. ollama, vllm, huggingface_inference_providers, openai")
+    execution_location: Optional[str] = Field(None, description="Execution locality e.g. local or remote")
+    local_compute_cost_per_second: Optional[float] = Field(None, description="Configured local hardware cost per second")
+    local_compute_price_per_million: Optional[float] = Field(None, description="Configured local compute price per 1M tokens")
     transient_credential: Optional[SecretStr] = Field(
         None,
         exclude=True,
@@ -79,6 +85,10 @@ class ModelScoringSummary(BaseModel):
     display_name: str
     provider_type: Optional[str] = None
     provider_model_id: Optional[str] = None
+    model_source: Optional[str] = None
+    source_repo_id: Optional[str] = None
+    execution_provider: Optional[str] = None
+    execution_location: Optional[str] = None
     attempted_questions: int = 0
     successful_generations: int = 0
     correct_answers: int = 0
@@ -99,6 +109,8 @@ class ModelScoringSummary(BaseModel):
     token_provenance: str = "unavailable"
     missing_usage_count: int = 0
     # Cost metrics (USD)
+    provider_api_cost_usd: Optional[float] = None
+    local_compute_cost_usd: Optional[float] = None
     total_cost_usd: Optional[float] = None
     cost_per_question_usd: Optional[float] = None
     unknown_cost_count: int = 0
@@ -157,6 +169,14 @@ class BenchmarkResult(BaseModel):
     model_id: str
     provider_model_id: str
     model_display_name: str
+    model_source: Optional[str] = None
+    source_repo_id: Optional[str] = None
+    execution_provider: Optional[str] = None
+    execution_location: Optional[str] = None
+    provider_type: Optional[str] = None
+    execution_mode: Optional[str] = None
+    base_url: Optional[str] = None
+    huggingface_repo_id: Optional[str] = None
     status: str = "success"  # success, failed, cancelled
     prompt_text: str
     reference_answer: str
@@ -170,7 +190,10 @@ class BenchmarkResult(BaseModel):
     ttft_ms: Optional[float] = None
     finish_reason: Optional[str] = None
     pricing_snapshot: Optional[PricingSnapshot] = None
+    provider_api_cost_usd: Optional[float] = None
+    local_compute_cost_usd: Optional[float] = None
     cost_usd: Optional[float] = None
+    total_cost_usd: Optional[float] = None
     error_message: Optional[str] = None
     error_category: Optional[str] = None
     evaluation_status: EvaluationOutcome = EvaluationOutcome.UNEVALUATED

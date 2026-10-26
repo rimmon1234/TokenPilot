@@ -48,6 +48,11 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
   const [supportsVision, setSupportsVision] = useState(false);
   const [supportsStreaming, setSupportsStreaming] = useState(true);
   const [supportsJsonMode, setSupportsJsonMode] = useState(false);
+  const [modelSource, setModelSource] = useState('custom');
+  const [sourceRepoId, setSourceRepoId] = useState('');
+  const [executionProvider, setExecutionProvider] = useState('ollama');
+  const [localComputePrice, setLocalComputePrice] = useState<string>('');
+  const [localComputeCostPerSec, setLocalComputeCostPerSec] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -60,6 +65,11 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
       setDisplayName(m.display_name);
       setProviderModelId(m.provider_model_id);
       setHfRepoId(m.huggingface_repo_id || '');
+      setModelSource(m.model_source || (m.huggingface_repo_id ? 'huggingface_hub' : m.source_type || 'custom'));
+      setSourceRepoId(m.source_repo_id || m.huggingface_repo_id || '');
+      setExecutionProvider(m.execution_provider || (m.execution_mode === 'local_openai_compatible' ? 'ollama' : m.provider_type));
+      setLocalComputePrice(m.local_compute_price_per_million != null ? String(m.local_compute_price_per_million) : '');
+      setLocalComputeCostPerSec(m.local_compute_cost_per_second != null ? String(m.local_compute_cost_per_second) : '');
       setProviderType(m.provider_type);
       setExecutionMode(m.execution_mode);
       setExecutionLocation(m.execution_location);
@@ -82,6 +92,11 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
       setDisplayName(m.name);
       setProviderModelId(m.repo_id);
       setHfRepoId(m.repo_id);
+      setModelSource('huggingface_hub');
+      setSourceRepoId(m.repo_id);
+      setExecutionProvider(m.suggested_execution_mode === 'local_openai_compatible' ? 'ollama' : 'huggingface_inference_providers');
+      setLocalComputePrice('');
+      setLocalComputeCostPerSec('');
       setProviderType('huggingface');
       setExecutionMode(m.suggested_execution_mode);
       setExecutionLocation(m.suggested_location);
@@ -106,6 +121,11 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
       setDisplayName(m.display_name);
       setProviderModelId(m.provider_model_id);
       setHfRepoId(m.huggingface_repo_id || '');
+      setModelSource(m.model_source || (m.huggingface_repo_id ? 'huggingface_hub' : 'custom'));
+      setSourceRepoId(m.source_repo_id || m.huggingface_repo_id || '');
+      setExecutionProvider(m.execution_provider || (m.execution_mode === 'local_openai_compatible' ? 'ollama' : m.provider_type));
+      setLocalComputePrice(m.local_compute_price_per_million != null ? String(m.local_compute_price_per_million) : '');
+      setLocalComputeCostPerSec(m.local_compute_cost_per_second != null ? String(m.local_compute_cost_per_second) : '');
       setProviderType(m.provider_type);
       setExecutionMode(m.execution_mode);
       setExecutionLocation(m.execution_location);
@@ -151,12 +171,15 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
     const modelToSave: WorkspaceModel = {
       id: modelId,
       display_name: displayName.trim(),
-      source_type: hfRepoId ? 'huggingface_hub' : 'custom',
+      source_type: (modelSource === 'huggingface_hub' || hfRepoId) ? 'huggingface_hub' : 'custom',
+      model_source: modelSource,
+      source_repo_id: (sourceRepoId.trim() || hfRepoId.trim()) || undefined,
+      execution_provider: executionProvider.trim() || (executionMode === 'local_openai_compatible' ? 'ollama' : providerType),
       provider_type: providerType,
       execution_mode: executionMode,
       execution_location: executionLocation,
       provider_model_id: providerModelId.trim(),
-      huggingface_repo_id: hfRepoId.trim() || undefined,
+      huggingface_repo_id: (sourceRepoId.trim() || hfRepoId.trim()) || undefined,
       base_url: baseUrl.trim() || undefined,
       license: license.trim() || 'unknown',
       gated_status: gatedStatus,
@@ -168,8 +191,10 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
       },
       context_window: Number(contextWindow) || 8192,
       quantization: quantization.trim() || undefined,
-      input_price_per_million: Number(inputPrice) || 0.0,
-      output_price_per_million: Number(outputPrice) || 0.0,
+      input_price_per_million: executionLocation === 'local' ? 0.0 : (Number(inputPrice) || 0.0),
+      output_price_per_million: executionLocation === 'local' ? 0.0 : (Number(outputPrice) || 0.0),
+      local_compute_price_per_million: localComputePrice ? parseFloat(localComputePrice) : undefined,
+      local_compute_cost_per_second: localComputeCostPerSec ? parseFloat(localComputeCostPerSec) : undefined,
       pricing_source: pricingSource,
       pricing_verified_at: now,
       enabled: true,
@@ -231,7 +256,7 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
 
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1">
-              Provider Model ID *
+              Provider Model ID (Runtime Model ID) *
             </label>
             <input
               type="text"
@@ -239,13 +264,46 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
               value={providerModelId}
               onChange={(e) => setProviderModelId(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-slate-100 text-sm font-mono focus:border-brand-500 focus:outline-none"
+              placeholder="e.g. qwen2.5-coder:7b"
+            />
+          </div>
+        </div>
+
+        {/* Model Source & Source Repo ID */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-300 mb-1">
+              Model Source / Origin
+            </label>
+            <select
+              value={modelSource}
+              onChange={(e) => setModelSource(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-slate-100 text-xs focus:border-brand-500 focus:outline-none"
+            >
+              <option value="huggingface_hub">Hugging Face Hub</option>
+              <option value="ollama_library">Ollama Library</option>
+              <option value="custom">Custom / Self-hosted</option>
+              <option value="google_ai_studio">Google AI Studio</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-300 mb-1">
+              Source Repository ID (Optional)
+            </label>
+            <input
+              type="text"
+              value={sourceRepoId}
+              onChange={(e) => setSourceRepoId(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none"
               placeholder="e.g. Qwen/Qwen2.5-Coder-7B-Instruct"
             />
           </div>
         </div>
 
-        {/* Execution Mode & Location (Decoupled!) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Execution Mode, Location & Execution Provider */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1">
               Execution Runtime Mode
@@ -265,30 +323,49 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
 
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1">
-              Execution Location (Locality)
+              Execution Provider / Runtime
+            </label>
+            <select
+              value={executionProvider}
+              onChange={(e) => setExecutionProvider(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-slate-100 text-xs focus:border-brand-500 focus:outline-none"
+            >
+              <option value="ollama">Ollama</option>
+              <option value="vllm">vLLM</option>
+              <option value="huggingface_inference_providers">Hugging Face Providers</option>
+              <option value="huggingface_dedicated">Hugging Face Dedicated</option>
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-300 mb-1">
+              Execution Location
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setExecutionLocation('remote')}
-                className={`py-2 px-3 text-xs rounded-lg font-medium border text-center transition-all ${
+                className={`py-2 px-2 text-xs rounded-lg font-medium border text-center transition-all ${
                   executionLocation === 'remote'
                     ? 'bg-brand-500/20 border-brand-500 text-brand-300'
                     : 'bg-dark-800 border-dark-700 text-slate-400 hover:text-slate-200'
                 }`}
               >
-                Remote Cloud
+                Remote
               </button>
               <button
                 type="button"
                 onClick={() => setExecutionLocation('local')}
-                className={`py-2 px-3 text-xs rounded-lg font-medium border text-center transition-all ${
+                className={`py-2 px-2 text-xs rounded-lg font-medium border text-center transition-all ${
                   executionLocation === 'local'
                     ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300'
                     : 'bg-dark-800 border-dark-700 text-slate-400 hover:text-slate-200'
                 }`}
               >
-                Local Machine
+                Local
               </button>
             </div>
           </div>
@@ -355,45 +432,81 @@ export const ConfigureModelModal: React.FC<ConfigureModelModalProps> = ({
         <div className="p-3 rounded-xl bg-dark-850 border border-dark-800 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-200">
-              Token Pricing (USD per 1 Million Tokens)
+              {executionLocation === 'local' ? 'Local Compute Cost (Optional Hardware Basis)' : 'API Token Pricing (USD per 1M Tokens)'}
             </span>
-            <span className="text-[10px] text-slate-400">Set 0 for local hardware / free tier</span>
+            <span className="text-[10px] text-slate-400">
+              {executionLocation === 'local' ? 'API Invoice is $0.00. Hardware cost is optional.' : 'Configured API invoice cost'}
+            </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[11px] text-slate-400 mb-1">Input Price / 1M</label>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                value={inputPrice}
-                onChange={(e) => setInputPrice(parseFloat(e.target.value) || 0.0)}
-                className="w-full px-2.5 py-1.5 rounded-lg bg-dark-900 border border-dark-700 text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none"
-              />
+          {executionLocation === 'local' ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Compute Price / 1M Tokens ($)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={localComputePrice}
+                    onChange={(e) => setLocalComputePrice(e.target.value)}
+                    placeholder="e.g. 0.05 (optional)"
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-dark-900 border border-dark-700 text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Compute Rate / Second ($/s)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.0001}
+                    value={localComputeCostPerSec}
+                    onChange={(e) => setLocalComputeCostPerSec(e.target.value)}
+                    placeholder="e.g. 0.0002 (optional)"
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-dark-900 border border-dark-700 text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Leave blank if local hardware depreciation / electricity is unconfigured. Unpriced models will remain on the Unpriced Tier shelf and will be safely excluded from the priced Pareto frontier.
+              </p>
             </div>
-            <div>
-              <label className="block text-[11px] text-slate-400 mb-1">Output Price / 1M</label>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                value={outputPrice}
-                onChange={(e) => setOutputPrice(parseFloat(e.target.value) || 0.0)}
-                className="w-full px-2.5 py-1.5 rounded-lg bg-dark-900 border border-dark-700 text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none"
-              />
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">Input Price / 1M</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={inputPrice}
+                  onChange={(e) => setInputPrice(parseFloat(e.target.value) || 0.0)}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-dark-900 border border-dark-700 text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">Output Price / 1M</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={outputPrice}
+                  onChange={(e) => setOutputPrice(parseFloat(e.target.value) || 0.0)}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-dark-900 border border-dark-700 text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">Pricing Source</label>
+                <input
+                  type="text"
+                  value={pricingSource}
+                  onChange={(e) => setPricingSource(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-dark-900 border border-dark-700 text-slate-100 text-xs focus:border-brand-500 focus:outline-none"
+                  placeholder="e.g. official_docs"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-[11px] text-slate-400 mb-1">Pricing Source</label>
-              <input
-                type="text"
-                value={pricingSource}
-                onChange={(e) => setPricingSource(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-lg bg-dark-900 border border-dark-700 text-slate-100 text-xs focus:border-brand-500 focus:outline-none"
-                placeholder="e.g. official_docs"
-              />
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Routing Pool Membership */}

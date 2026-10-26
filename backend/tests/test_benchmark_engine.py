@@ -153,11 +153,14 @@ async def test_sequential_multi_model_benchmark_execution(temp_dirs):
         assert len(m1_res) == 2
         assert len(m2_res) == 2
 
-        # Check cost calculation: m1 is 0.0, m2 is 0.00001
-        assert m1_res[0].cost_usd == 0.0
+        # Check truthful cost calculation: m1 has $0.00 API cost but unknown total cost; m2 has 0.00001
+        assert m1_res[0].provider_api_cost_usd == 0.0
+        assert m1_res[0].local_compute_cost_usd is None
+        assert m1_res[0].cost_usd is None  # Truthful: local model without compute price is unpriced
+        assert m2_res[0].provider_api_cost_usd == pytest.approx(0.00001)
         assert m2_res[0].cost_usd == pytest.approx(0.00001)
         assert m1_res[0].latency_ms == 150.0
-        assert m1_res[0].score is None  # Reserved for M4.2.2!
+        assert m1_res[0].score is None
 
 
 @pytest.mark.asyncio

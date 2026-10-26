@@ -19,6 +19,7 @@ from app.schemas.evaluation import (
 )
 from app.services.gateway.runner import execute_internal_inference
 from app.services.gateway.utils import calculate_estimated_cost
+from app.services.benchmark.metadata_resolver import resolve_model_metadata, calculate_cost_breakdown
 from app.services.dataset.storage import dataset_storage
 from app.services.benchmark.storage import benchmark_storage
 from app.core.network_validator import validate_outbound_url
@@ -37,6 +38,21 @@ class BenchmarkRunner:
         self._active_runs: Dict[str, BenchmarkRun] = {}
         self._cancel_events: Dict[str, asyncio.Event] = {}
         self._active_tasks: Dict[str, asyncio.Task] = {}
+        self._reconcile_orphaned_runs()
+
+    def _reconcile_orphaned_runs(self) -> None:
+        """Mark any runs left in PENDING or RUNNING status on server startup as CANCELLED."""
+        try:
+            saved_runs = self.storage.list_runs()
+            for r in saved_runs:
+                if r.status in (BenchmarkRunStatus.PENDING, BenchmarkRunStatus.RUNNING):
+                    logger.warning("Reconciling orphaned benchmark run %s to CANCELLED.", r.id)
+                    r.status = BenchmarkRunStatus.CANCELLED
+                    r.completed_at = datetime.now(timezone.utc)
+                    r.error_message = "Server restarted while benchmark run was in-flight."
+                    self.storage.save_run(r)
+        except Exception as ex:
+            logger.debug("Failed to reconcile orphaned benchmark runs on startup: %s", ex)
 
     def validate_run_request(self, request: BenchmarkRunCreate) -> tuple[Any, List[DatasetRecord]]:
         """
@@ -75,12 +91,32 @@ class BenchmarkRunner:
                 if not is_valid:
                     raise ValueError(f"Invalid base_url for model '{m.display_name}': {err}")
 
+            # Disambiguate model source, runtime provider, location, and runtime model ID
+            meta = resolve_model_metadata(m)
+            if not m.model_source:
+                m.model_source = meta["model_source"]
+            if not m.source_repo_id:
+                m.source_repo_id = meta["source_repo_id"]
+            if not m.execution_provider:
+                m.execution_provider = meta["execution_provider"]
+            if not m.execution_location:
+                m.execution_location = meta["execution_location"]
+            if not m.provider_model_id:
+                m.provider_model_id = meta["runtime_model_id"]
+
             # Ensure PricingSnapshot is attached if pricing information is present
-            if not m.pricing_snapshot and (m.input_price_per_million is not None or m.output_price_per_million is not None):
+            if not m.pricing_snapshot and (
+                m.input_price_per_million is not None
+                or m.output_price_per_million is not None
+                or m.local_compute_cost_per_second is not None
+                or m.local_compute_price_per_million is not None
+            ):
                 m.pricing_snapshot = PricingSnapshot(
                     input_price_per_million=m.input_price_per_million,
                     output_price_per_million=m.output_price_per_million,
                     pricing_source=m.pricing_source or "model_card",
+                    local_compute_cost_per_second=m.local_compute_cost_per_second,
+                    local_compute_price_per_million=m.local_compute_price_per_million,
                 )
 
         # 4. Load canonical records
@@ -227,15 +263,22 @@ class BenchmarkRunner:
                     # Execute in-process via existing provider adapter
                     inf_res = await execute_internal_inference(chat_req, credential=credential_val)
 
-                    # Calculate cost only when usage and prices are present
-                    cost = inf_res.estimated_cost_usd
-                    if cost is None:
-                        cost = calculate_estimated_cost(
-                            inf_res.prompt_tokens,
-                            inf_res.completion_tokens,
-                            model_cfg.input_price_per_million,
-                            model_cfg.output_price_per_million,
-                        )
+                    # Resolve model metadata and calculate truthful multi-dimensional cost breakdown
+                    meta = resolve_model_metadata(model_cfg)
+                    loc = model_cfg.execution_location or meta["execution_location"]
+
+                    cost_breakdown = calculate_cost_breakdown(
+                        execution_location=loc,
+                        prompt_tokens=inf_res.prompt_tokens,
+                        completion_tokens=inf_res.completion_tokens,
+                        total_tokens=inf_res.total_tokens,
+                        latency_ms=inf_res.latency_ms,
+                        input_price_per_million=model_cfg.input_price_per_million,
+                        output_price_per_million=model_cfg.output_price_per_million,
+                        local_compute_cost_per_second=model_cfg.local_compute_cost_per_second,
+                        local_compute_price_per_million=model_cfg.local_compute_price_per_million,
+                        pricing_source=model_cfg.pricing_source,
+                    )
 
                     # Construct normalized BenchmarkResult
                     result = BenchmarkResult(
@@ -250,6 +293,10 @@ class BenchmarkRunner:
                         model_id=model_cfg.model_id,
                         provider_model_id=model_cfg.provider_model_id,
                         model_display_name=model_cfg.display_name,
+                        model_source=model_cfg.model_source or meta["model_source"],
+                        source_repo_id=model_cfg.source_repo_id or meta["source_repo_id"],
+                        execution_provider=model_cfg.execution_provider or meta["execution_provider"],
+                        execution_location=loc,
                         status="success" if inf_res.success else "failed",
                         prompt_text=record.input_messages[0]["content"],
                         reference_answer=record.reference_answer,
@@ -263,7 +310,9 @@ class BenchmarkRunner:
                         ttft_ms=inf_res.ttft_ms,
                         finish_reason=inf_res.finish_reason,
                         pricing_snapshot=model_cfg.pricing_snapshot,
-                        cost_usd=cost,
+                        provider_api_cost_usd=cost_breakdown["provider_api_cost_usd"],
+                        local_compute_cost_usd=cost_breakdown["local_compute_cost_usd"],
+                        cost_usd=cost_breakdown["total_cost_usd"],
                         error_message=inf_res.error_message,
                         error_category=inf_res.error_category,
                         score=None,  # Reserved for M4.2.2!
@@ -303,33 +352,57 @@ class BenchmarkRunner:
             self.storage.save_run(run)
             logger.info("Benchmark run %s finished with status: %s", run_id, run.status.value)
 
+        except asyncio.CancelledError:
+            logger.info("Benchmark run %s task was cancelled.", run_id)
+            run.status = BenchmarkRunStatus.CANCELLED
+            run.completed_at = datetime.now(timezone.utc)
+            run.progress.current_model_id = None
+            run.progress.current_record_id = None
+            self.storage.save_run(run)
         except Exception as ex:
             logger.error("Unexpected error in benchmark execution loop %s: %s", run_id, ex, exc_info=True)
             run.status = BenchmarkRunStatus.FAILED
             run.error_message = str(ex)
             run.completed_at = datetime.now(timezone.utc)
+            run.progress.current_model_id = None
+            run.progress.current_record_id = None
             self.storage.save_run(run)
         finally:
-            # Clean up active cancellation event
             self._cancel_events.pop(run_id, None)
+            self._active_tasks.pop(run_id, None)
+            self._active_runs.pop(run_id, None)
 
     def cancel_run(self, run_id: str) -> bool:
         """Trigger cancellation for an in-flight benchmark run."""
+        # 1. Active in-memory cancellation
         if run_id in self._cancel_events:
             self._cancel_events[run_id].set()
+            task = self._active_tasks.get(run_id)
+            if task and not task.done():
+                task.cancel()
             run = self._active_runs.get(run_id)
             if run:
                 run.status = BenchmarkRunStatus.CANCELLED
                 run.completed_at = datetime.now(timezone.utc)
+                run.progress.current_model_id = None
+                run.progress.current_record_id = None
                 self.storage.save_run(run)
             return True
 
-        # Check if saved run can be marked cancelled
+        # 2. Check if saved run can be marked cancelled
         saved_run = self.storage.get_run(run_id)
         if saved_run and saved_run.status in (BenchmarkRunStatus.PENDING, BenchmarkRunStatus.RUNNING):
             saved_run.status = BenchmarkRunStatus.CANCELLED
             saved_run.completed_at = datetime.now(timezone.utc)
+            saved_run.progress.current_model_id = None
+            saved_run.progress.current_record_id = None
             self.storage.save_run(saved_run)
+            if run_id in self._active_runs:
+                self._active_runs[run_id] = saved_run
+            return True
+
+        # 3. Already cancelled (idempotent success)
+        if saved_run and saved_run.status == BenchmarkRunStatus.CANCELLED:
             return True
 
         return False

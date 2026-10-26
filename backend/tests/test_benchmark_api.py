@@ -141,6 +141,45 @@ def test_cancel_nonexistent_run():
     assert res.status_code == 404
 
 
+def test_cancel_active_run_success():
+    from app.schemas.evaluation import BenchmarkRun, BenchmarkRunProgress, BenchmarkRunStatus, BenchmarkGenerationSettings
+    from datetime import datetime, timezone
+    from app.services.benchmark import benchmark_runner, benchmark_storage
+
+    fake_run = BenchmarkRun(
+        id="run-test-cancel-api",
+        dataset_manifest_id="ds-test-benchmark-gsm8k",
+        dataset_name="GSM8K",
+        dataset_id="gsm8k",
+        dataset_revision="main",
+        source_split="test",
+        task_type="math_reasoning",
+        model_ids=["test-m1"],
+        model_configs=[],
+        status=BenchmarkRunStatus.RUNNING,
+        progress=BenchmarkRunProgress(total_items=5),
+        generation_settings=BenchmarkGenerationSettings(),
+        started_at=datetime.now(timezone.utc),
+    )
+    benchmark_storage.save_run(fake_run)
+    benchmark_runner._active_runs[fake_run.id] = fake_run
+
+    res = client.post(f"/api/benchmarks/runs/{fake_run.id}/cancel")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["id"] == fake_run.id
+    assert data["status"] == "cancelled"
+
+    # Verify idempotent cancel
+    res_retry = client.post(f"/api/benchmarks/runs/{fake_run.id}/cancel")
+    assert res_retry.status_code == 200
+    assert res_retry.json()["status"] == "cancelled"
+
+    # Clean up
+    benchmark_storage.delete_run(fake_run.id)
+    benchmark_runner._active_runs.pop(fake_run.id, None)
+
+
 @pytest.mark.asyncio
 async def test_score_benchmark_run_success():
     # Record 2 sampled by seed 42 has reference answer 70000

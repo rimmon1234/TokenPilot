@@ -98,7 +98,16 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
   - Dedicated "Local Hardware & Unpriced Models" shelf preserving accurate cost separation without artificial zero coordinates.
   - Detailed model-result inspection viewer with multi-dimensional model and outcome filters.
   - Reproducible secret-free JSON and RFC 4180 CSV report export endpoints.
-
+- **Benchmark Metadata & Cost Integrity Checkpoint** (Completed):
+  - Decoupled Model Source (e.g. Hugging Face Hub) from Execution Runtime (e.g. local Ollama) across configuration, execution, storage, scoring, and UI badges.
+  - Decoupled billable Provider API Cost ($0.00 for local Ollama) from Local Compute Cost ($/s or $/1M tokens) and Estimated Total Cost.
+  - Prevented unpriced local models from erroneously dominating the priced Pareto frontier.
+  - Legacy run backwards compatibility and test coverage.
+- **M5 Development-Data Preparation & Protocol** (Groundwork Complete):
+  - Strict split discipline: GSM8K upstream `train` split exclusively for `dev_train`, preserving `test` split as a held-out benchmark.
+  - `M5PilotRecord` canonical schema and `m5_collector` builder.
+  - Group-K prompt partition engine ensuring zero prompt leakage between training and validation folds.
+  - Documented manual execution runbook for sequential evaluation of `llama3.2:3b` and `qwen2.5-coder:7b`.
 
 ### Milestone M5: Supervised ML Router Training
 - Feature engineering on input prompts (syntactic tokens, regex markers, embeddings)

@@ -11,10 +11,13 @@ Suggested configurations maintained by the application or verified catalog.
 - `id`: string (slug e.g., `hf-qwen-2.5-coder-7b`)
 - `display_name`: string
 - `source_type`: `'huggingface_hub' | 'custom'`
+- `model_source`: optional string (`'huggingface_hub' | 'ollama_library' | 'custom' | 'google_ai_studio' | 'openai'`)
+- `source_repo_id`: optional string (e.g. `Qwen/Qwen2.5-Coder-7B-Instruct`)
+- `execution_provider`: optional string (`'ollama' | 'vllm' | 'huggingface_inference_providers' | 'openai' | 'gemini'`)
 - `provider_type`: string
 - `execution_mode`: `'huggingface_inference_providers' | 'huggingface_inference_endpoint' | 'huggingface_local_transformers' | 'local_openai_compatible' | 'remote_openai_compatible'`
 - `execution_location`: `'local' | 'remote'`
-- `provider_model_id`: string
+- `provider_model_id`: string (runtime model tag sent to execution provider, e.g. `qwen2.5-coder:7b`)
 - `huggingface_repo_id`: optional string
 - `base_url`: optional string
 - `license`: string (e.g. `apache-2.0`, `mit`, `unknown`)
@@ -22,8 +25,10 @@ Suggested configurations maintained by the application or verified catalog.
 - `capabilities`: object (`{ supports_tools: bool, supports_vision: bool, supports_streaming: bool, supports_json_mode: bool }`)
 - `context_window`: integer (default e.g. 8192)
 - `quantization`: optional string (e.g. `4bit`, `8bit`, `none`)
-- `input_price_per_million`: number (USD)
-- `output_price_per_million`: number (USD)
+- `input_price_per_million`: number (USD per 1M tokens)
+- `output_price_per_million`: number (USD per 1M tokens)
+- `local_compute_price_per_million`: optional number (configured amortized hardware compute cost per 1M tokens)
+- `local_compute_cost_per_second`: optional number (configured hardware compute cost per second of inference)
 - `pricing_source`: string (`official_docs`, `estimated`, `unknown`)
 - `default_pool_hint`: optional string (`Economy`, `Quality`)
 
@@ -32,10 +37,13 @@ The active, user-configurable model instance inside a user's workspace.
 - `id`: string (UUID v4)
 - `display_name`: string
 - `source_type`: `'huggingface_hub' | 'custom'`
+- `model_source`: optional string (`'huggingface_hub' | 'ollama_library' | 'custom' | 'google_ai_studio' | 'openai'`)
+- `source_repo_id`: optional string (e.g. `Qwen/Qwen2.5-Coder-7B-Instruct`)
+- `execution_provider`: optional string (`'ollama' | 'vllm' | 'huggingface_inference_providers' | 'openai' | 'gemini'`)
 - `provider_type`: string
 - `execution_mode`: ExecutionMode enum
 - `execution_location`: `'local' | 'remote'`
-- `provider_model_id`: string
+- `provider_model_id`: string (runtime model identifier)
 - `huggingface_repo_id`: optional string
 - `base_url`: optional string
 - `credential_reference_id`: optional string (opaque reference, NEVER secret text)
@@ -44,8 +52,10 @@ The active, user-configurable model instance inside a user's workspace.
 - `capabilities`: object
 - `context_window`: integer
 - `quantization`: optional string
-- `input_price_per_million`: number
-- `output_price_per_million`: number
+- `input_price_per_million`: number (provider API invoice price)
+- `output_price_per_million`: number (provider API invoice price)
+- `local_compute_price_per_million`: optional number (amortized hardware compute price)
+- `local_compute_cost_per_second`: optional number (hardware compute rate per second)
 - `pricing_source`: string
 - `pricing_verified_at`: optional string (ISO 8601)
 - `enabled`: boolean (default `true`)
@@ -254,6 +264,12 @@ Persisted inside `BenchmarkRun.results_summary`:
 - `model_metrics`: map of `model_id` to `ModelScoringSummary`:
   - `model_id`: string
   - `display_name`: string
+  - `model_source`: optional string (`'huggingface_hub' | 'ollama_library' | 'custom' | 'google_ai_studio' | 'openai'`)
+  - `source_repo_id`: optional string (e.g. `Qwen/Qwen2.5-Coder-7B-Instruct`)
+  - `execution_provider`: optional string (`'ollama' | 'vllm' | 'huggingface_inference_providers' | 'openai' | 'gemini'`)
+  - `execution_location`: optional string (`'local' | 'remote'`)
+  - `provider_type`: optional string (`ollama`, `hf_serverless`, `custom_openai`)
+  - `provider_model_id`: optional string (actual provider model identifier used at execution)
   - `attempted_questions`: integer
   - `successful_generations`: integer
   - `correct_answers`: integer
@@ -263,8 +279,6 @@ Persisted inside `BenchmarkRun.results_summary`:
   - `unevaluated_results`: integer
   - `scorable_accuracy`: float or null
   - `end_to_end_accuracy`: float or null
-  - `provider_type`: optional string (`ollama`, `hf_serverless`, `custom_openai`)
-  - `provider_model_id`: optional string (actual provider model identifier used at execution)
   - `avg_latency_ms`: optional float (mean end-to-end latency in milliseconds)
   - `median_latency_ms`: optional float (median latency via `statistics.median`)
   - `avg_ttft_ms`: optional float (mean time to first token in milliseconds)
@@ -273,8 +287,10 @@ Persisted inside `BenchmarkRun.results_summary`:
   - `total_tokens`: optional integer
   - `token_provenance`: string (`provider_reported`, `estimated`, `unavailable`)
   - `missing_usage_count`: integer (records with missing or unavailable token usage)
-  - `total_cost_usd`: optional float (total dollar cost for all evaluated requests)
-  - `cost_per_question_usd`: optional float (average cost per attempted question)
+  - `provider_api_cost_usd`: optional float (actual provider API charge; known $0.00 for local Ollama)
+  - `local_compute_cost_usd`: optional float (estimated local compute hardware cost; null if unconfigured)
+  - `total_cost_usd`: optional float (total estimated inference cost; strictly null if compute is unconfigured)
+  - `cost_per_question_usd`: optional float (average cost per attempted question; null if unpriced)
   - `unknown_cost_count`: integer (records with unknown or unmetered pricing)
   - `pricing_source`: optional string
   - `is_pareto_efficient`: optional boolean (True if non-dominated in quality vs cost; False if dominated; None if unpriced)
@@ -324,6 +340,10 @@ Canonical evaluation result record for an individual prompt executed against a s
   - `model_id`: string
   - `provider_model_id`: string
   - `model_display_name`: string
+  - `model_source`: optional string (`huggingface_hub`, `ollama_library`, `custom`)
+  - `source_repo_id`: optional string (e.g. `Qwen/Qwen2.5-Coder-7B-Instruct`)
+  - `execution_provider`: optional string (`ollama`, `vllm`, `huggingface_inference_providers`, `openai`)
+  - `execution_location`: optional string (`local`, `remote`)
   - `status`: `'success' | 'failed' | 'cancelled'`
   - `prompt_text`: string (canonical formatted benchmark question)
   - `reference_answer`: string (ground truth answer)
@@ -337,7 +357,10 @@ Canonical evaluation result record for an individual prompt executed against a s
   - `ttft_ms`: optional float (time to first SSE chunk)
   - `finish_reason`: optional string (`stop`, `length`, etc.)
   - `pricing_snapshot`: optional `PricingSnapshot`
-  - `cost_usd`: optional float (calculated from verified tokens and pricing snapshot)
+  - `provider_api_cost_usd`: optional float (known API charge; $0.00 for local)
+  - `local_compute_cost_usd`: optional float (hardware compute cost; null if unpriced)
+  - `total_cost_usd`: optional float (total estimated inference cost; null if unpriced)
+  - `cost_usd`: optional float (alias for total cost)
   - `error_message`: optional string
   - `error_category`: optional string (`timeout`, `rate_limit`, `auth_error`, `upstream_error`, `validation_error`)
   - `evaluation_status`: `EvaluationOutcome` (`'correct' | 'incorrect' | 'unparseable' | 'failed' | 'unevaluated'`)
@@ -346,6 +369,46 @@ Canonical evaluation result record for an individual prompt executed against a s
   - `score`: optional float (`1.0` if correct, `0.0` if incorrect or unparseable, `None` if failed or unevaluated)
   - `metric_name`: optional string (`'exact_match'`)
   - `created_at`: datetime
+
+#### `M5PilotRecord` (Phase E / M5 Data Preparation)
+Normalized training-data record for the upcoming M5 supervised ML quality router:
+- `sample_id`: string (`m5-{dataset_id}-{record_id}-{model_id}`)
+- `prompt_id`: string (cluster key for Group-K cross validation; guarantees zero prompt leakage)
+- `record_id`: string
+- `dataset_id`: string (`gsm8k`)
+- `dataset_revision`: string
+- `source_split`: string (`train`)
+- `evaluation_role`: string (`dev_train`)
+- `model_id`: string
+- `model_source`: string
+- `source_repo_id`: optional string
+- `execution_provider`: string
+- `execution_location`: string
+- `runtime_model_id`: string
+- `prompt_text`: string (sanitized, zero secrets)
+- `prompt_char_length`: integer
+- `prompt_word_count`: integer
+- `temperature`: float
+- `max_tokens`: optional integer
+- `output_text`: optional string
+- `extracted_answer`: optional string
+- `reference_answer`: string
+- `evaluation_status`: string (`correct`, `incorrect`, `unparseable`, `failed`)
+- `quality_score`: optional float (`1.0` for correct, `0.0` for incorrect or unparseable, `None` for failed)
+- `is_correct`: optional boolean (`True` for correct, `False` for incorrect or unparseable, `None` for failed)
+- `latency_ms`: float
+- `ttft_ms`: optional float
+- `prompt_tokens`: optional integer
+- `completion_tokens`: optional integer
+- `total_tokens`: optional integer
+- `token_provenance`: string
+- `provider_api_cost_usd`: optional float
+- `local_compute_cost_usd`: optional float
+- `total_cost_usd`: optional float (strictly null if unpriced)
+- `cost_provenance`: string
+- `request_status`: string
+- `error_category`: optional string
+- `dataset_pilot_label`: string (`m5_supervised_pilot_v1`)
 
 ---
 

@@ -479,6 +479,66 @@ flowchart TD
 3. **Truthful Local Hardware Treatment**: Local Ollama execution carries no per-token billing. Assigning an artificial $0.00 position would falsely declare local models Pareto-optimal over all cloud alternatives; TokenPilot places unpriced compute on a dedicated shelf, keeping the cost axis methodologically sound.
 4. **Export Safety**: JSON and CSV exports exclude all secrets, API tokens, and transient credentials. CSV rows are generated using Python's `csv.writer` with RFC 4180 quoting to protect against spreadsheet formula injection and delimiter corruption.
 
+---
+
+## 9. Model Source vs. Runtime Disambiguation & Multi-Dimensional Cost Architecture
+
+```mermaid
+graph TD
+    subgraph ModelConfig ["Model Configuration & Provenance"]
+        Source["Model Source (e.g. Hugging Face Hub)"]
+        SourceRepo["Source Repo ID (e.g. Qwen/Qwen2.5-Coder-7B-Instruct)"]
+        Runtime["Execution Runtime (e.g. Ollama)"]
+        RuntimeID["Runtime Model ID (e.g. qwen2.5-coder:7b)"]
+        Location["Locality (Local Machine vs Remote Cloud)"]
+    end
+
+    subgraph CostDimensions ["Multi-Dimensional Cost Accounting Engine"]
+        APICost["Provider API Cost (Known $0.00 for Local Ollama)"]
+        ComputeCost["Local Compute Cost (Configured Rate/s or Price/1M; Null if Unconfigured)"]
+        TotalCost["Estimated Total Cost (API Cost + Compute Cost; Strictly Null if Unconfigured)"]
+        ParetoDecision{"Is Total Cost Known?"}
+        Frontier["Priced Pareto Frontier Calculation"]
+        UnpricedShelf["Unpriced Tier Shelf (Preserved Quality & Latency)"]
+    end
+
+    subgraph M5Pipeline ["M5 Supervised ML Data Preparation (app.services.benchmark.m5_collector)"]
+        M5Builder["build_m5_pilot_record(result, run)"]
+        GroupK["partition_m5_records_by_prompt(records, seed=42)"]
+        TrainSplit["Train Partition (Prompts A, B, C...)"]
+        ValSplit["Held-Out Validation Partition (Prompts D, E...)"]
+        ZeroLeakage["Strict Invariant: All Model Records for Prompt X in Same Partition"]
+    end
+
+    Source --> Runtime
+    Runtime --> APICost
+    RuntimeID --> APICost
+    Location --> ComputeCost
+    APICost --> TotalCost
+    ComputeCost --> TotalCost
+    TotalCost --> ParetoDecision
+    ParetoDecision -->|Yes| Frontier
+    ParetoDecision -->|No / Null| UnpricedShelf
+
+    Frontier --> M5Builder
+    UnpricedShelf --> M5Builder
+    M5Builder --> GroupK
+    GroupK --> TrainSplit
+    GroupK --> ValSplit
+    GroupK --> ZeroLeakage
+```
+
+### Architectural Guarantees:
+1. **Decoupled Identity**: Model source (where weights originate) and execution provider (service executing inference) are decoupled across configuration, execution, storage, scoring, UI, and exports. Qwen downloaded from Hugging Face Hub running on local Ollama is labeled `Hugging Face Hub • Ollama • qwen2.5-coder:7b` rather than mislabeled as hosted inference.
+2. **Three-Tier Cost Separation**:
+   - `provider_api_cost_usd`: 0.0 for local hardware; invoiced tokens for remote APIs.
+   - `local_compute_cost_usd`: Evaluated from user-calibrated $/s or $/1M tokens; `None` if unconfigured.
+   - `total_cost_usd`: Evaluated only when all components are known; never coerced to zero.
+3. **M5 Pilot Collection Preparation**:
+   - Upstream split discipline: strictly imports GSM8K `train` split under role `dev_train`.
+   - Group-K partitioning: deterministically groups all model evaluations of a prompt into the same partition, preventing prompt leakage into validation folds.
+
+
 
 
 

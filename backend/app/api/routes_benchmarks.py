@@ -77,7 +77,7 @@ async def get_benchmark_run_results(
     return results
 
 
-@router.post("/runs/{run_id}/cancel")
+@router.post("/runs/{run_id}/cancel", response_model=BenchmarkRun)
 async def cancel_benchmark_run(run_id: str):
     """Signal cancellation for an active or queued benchmark run."""
     success = benchmark_runner.cancel_run(run_id)
@@ -86,7 +86,13 @@ async def cancel_benchmark_run(run_id: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Benchmark run '{run_id}' not found or cannot be cancelled.",
         )
-    return {"status": "cancelled", "run_id": run_id}
+    run = benchmark_runner.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Benchmark run '{run_id}' not found after cancellation.",
+        )
+    return run
 
 
 @router.delete("/runs/{run_id}")
@@ -214,8 +220,11 @@ async def export_benchmark_run(
         writer.writerow([
             "Model ID",
             "Display Name",
-            "Provider",
-            "Provider Model ID",
+            "Model Source",
+            "Source Repo ID",
+            "Execution Provider",
+            "Execution Location",
+            "Runtime Model ID",
             "Attempted Questions",
             "Successful Generations",
             "Correct Answers",
@@ -231,6 +240,8 @@ async def export_benchmark_run(
             "Total Completion Tokens",
             "Total Tokens",
             "Token Provenance",
+            "Provider API Cost (USD)",
+            "Local Compute Cost (USD)",
             "Total Cost (USD)",
             "Cost Per Question (USD)",
             "Pricing Source",
@@ -246,7 +257,10 @@ async def export_benchmark_run(
             writer.writerow([
                 m_id,
                 m_data.get("display_name", m_id),
-                m_data.get("provider_type", ""),
+                m_data.get("model_source", ""),
+                m_data.get("source_repo_id", "") or "",
+                m_data.get("execution_provider") or m_data.get("provider_type", ""),
+                m_data.get("execution_location", ""),
                 m_data.get("provider_model_id", ""),
                 m_data.get("attempted_questions", 0),
                 m_data.get("successful_generations", 0),
@@ -263,6 +277,8 @@ async def export_benchmark_run(
                 m_data.get("total_completion_tokens") if m_data.get("total_completion_tokens") is not None else "",
                 m_data.get("total_tokens") if m_data.get("total_tokens") is not None else "",
                 m_data.get("token_provenance", "unavailable"),
+                m_data.get("provider_api_cost_usd") if m_data.get("provider_api_cost_usd") is not None else "",
+                m_data.get("local_compute_cost_usd") if m_data.get("local_compute_cost_usd") is not None else "",
                 m_data.get("total_cost_usd") if m_data.get("total_cost_usd") is not None else "",
                 m_data.get("cost_per_question_usd") if m_data.get("cost_per_question_usd") is not None else "",
                 m_data.get("pricing_source", ""),
@@ -277,7 +293,10 @@ async def export_benchmark_run(
             "Record ID",
             "Model ID",
             "Model Display Name",
-            "Provider Model ID",
+            "Model Source",
+            "Execution Provider",
+            "Execution Location",
+            "Runtime Model ID",
             "Status",
             "Evaluation Status",
             "Score",
@@ -291,7 +310,9 @@ async def export_benchmark_run(
             "Completion Tokens",
             "Total Tokens",
             "Token Provenance",
-            "Cost (USD)",
+            "Provider API Cost (USD)",
+            "Local Compute Cost (USD)",
+            "Total Cost (USD)",
             "Error Category",
             "Error Message",
         ])
@@ -306,6 +327,9 @@ async def export_benchmark_run(
                 r.record_id,
                 r.model_id,
                 r.model_display_name,
+                r.model_source or "",
+                r.execution_provider or "",
+                r.execution_location or "",
                 r.provider_model_id,
                 r.status,
                 eval_status_str,
@@ -320,6 +344,8 @@ async def export_benchmark_run(
                 r.completion_tokens if r.completion_tokens is not None else "",
                 r.total_tokens if r.total_tokens is not None else "",
                 r.token_provenance or "",
+                r.provider_api_cost_usd if r.provider_api_cost_usd is not None else "",
+                r.local_compute_cost_usd if r.local_compute_cost_usd is not None else "",
                 r.cost_usd if r.cost_usd is not None else "",
                 r.error_category or "",
                 r.error_message or "",
@@ -367,11 +393,18 @@ async def export_benchmark_run(
             {
                 "model_id": cfg.model_id,
                 "display_name": cfg.display_name,
+                "model_source": cfg.model_source,
+                "source_repo_id": cfg.source_repo_id or cfg.huggingface_repo_id,
+                "execution_provider": cfg.execution_provider or cfg.provider_type,
+                "execution_location": cfg.execution_location or ("local" if "local" in str(cfg.execution_mode) else "remote"),
+                "runtime_model_id": cfg.provider_model_id,
                 "provider_type": cfg.provider_type,
                 "provider_model_id": cfg.provider_model_id,
                 "pricing_source": cfg.pricing_source,
                 "input_price_per_million": cfg.input_price_per_million,
                 "output_price_per_million": cfg.output_price_per_million,
+                "local_compute_cost_per_second": cfg.local_compute_cost_per_second,
+                "local_compute_price_per_million": cfg.local_compute_price_per_million,
             }
             for cfg in run.model_configs
         ],
@@ -382,6 +415,10 @@ async def export_benchmark_run(
                 "record_id": r.record_id,
                 "model_id": r.model_id,
                 "model_display_name": r.model_display_name,
+                "model_source": r.model_source,
+                "source_repo_id": r.source_repo_id,
+                "execution_provider": r.execution_provider,
+                "execution_location": r.execution_location,
                 "provider_model_id": r.provider_model_id,
                 "status": r.status,
                 "evaluation_status": (
@@ -401,6 +438,8 @@ async def export_benchmark_run(
                 "completion_tokens": r.completion_tokens,
                 "total_tokens": r.total_tokens,
                 "token_provenance": r.token_provenance,
+                "provider_api_cost_usd": r.provider_api_cost_usd,
+                "local_compute_cost_usd": r.local_compute_cost_usd,
                 "cost_usd": r.cost_usd,
                 "error_category": r.error_category,
                 "error_message": r.error_message,

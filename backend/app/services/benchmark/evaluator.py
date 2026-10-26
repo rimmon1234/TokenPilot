@@ -12,6 +12,7 @@ from app.schemas.evaluation import (
     BenchmarkRunScoringSummary,
 )
 from app.services.dataset.normalizers import extract_gsm8k_final_answer
+from app.services.benchmark.metadata_resolver import resolve_model_metadata
 
 
 def clean_candidate_number(raw: str) -> Optional[str]:
@@ -200,12 +201,26 @@ def compare_gsm8k_answers(candidate_str: Optional[str], reference_str: Optional[
         return clean_cand.lower() == clean_ref.lower()
 
 
-def evaluate_gsm8k_result(result: BenchmarkResult) -> BenchmarkResult:
+def evaluate_gsm8k_result(
+    result: BenchmarkResult, model_config: Optional[Any] = None
+) -> BenchmarkResult:
     """
     Evaluate an individual GSM8K benchmark result deterministically.
     Preserves all inference telemetry, timestamps, and cost data.
     Updates evaluation_status, extracted_answer, score, metric_name, and evaluation_details.
     """
+    # Disambiguate model metadata if missing on result
+    if not result.model_source or not result.execution_provider or not result.execution_location:
+        meta = resolve_model_metadata(model_config or result)
+        if not result.model_source:
+            result.model_source = meta["model_source"]
+        if not result.source_repo_id:
+            result.source_repo_id = meta["source_repo_id"]
+        if not result.execution_provider:
+            result.execution_provider = meta["execution_provider"]
+        if not result.execution_location:
+            result.execution_location = meta["execution_location"]
+
     # 1. Non-successful inference status (timeout, 401, 429, cancelled, error) -> FAILED
     if result.status != "success":
         result.evaluation_status = EvaluationOutcome.FAILED
@@ -326,9 +341,13 @@ def calculate_benchmark_scores(
     Score all results for a GSM8K benchmark run, calculate per-model and aggregate metrics,
     and update run.results_summary without making external API calls.
     """
+    model_config_map: Dict[str, Any] = {
+        cfg.model_id: cfg for cfg in (run.model_configs or [])
+    }
     evaluated_results: List[BenchmarkResult] = []
     for res in results:
-        evaluated_res = evaluate_gsm8k_result(res)
+        cfg = model_config_map.get(res.model_id)
+        evaluated_res = evaluate_gsm8k_result(res, model_config=cfg)
         evaluated_results.append(evaluated_res)
 
     # Group results by model_id
@@ -406,35 +425,88 @@ def calculate_benchmark_scores(
         else:
             token_provenance = "unavailable"
 
-        # Cost accounting
+        # Model configs lookup & metadata resolution
+        model_cfg = next((c for c in run.model_configs if c.model_id == model_id), None)
+        first_res = model_res_list[0] if model_res_list else None
+        meta = resolve_model_metadata(model_cfg or first_res or {})
+
+        model_source = (model_cfg.model_source if model_cfg and model_cfg.model_source else None) or (first_res.model_source if first_res else None) or meta["model_source"]
+        source_repo_id = (model_cfg.source_repo_id if model_cfg and model_cfg.source_repo_id else None) or (first_res.source_repo_id if first_res else None) or meta["source_repo_id"]
+        execution_provider = (model_cfg.execution_provider if model_cfg and model_cfg.execution_provider else None) or (first_res.execution_provider if first_res else None) or meta["execution_provider"]
+        execution_location = (model_cfg.execution_location if model_cfg and model_cfg.execution_location else None) or (first_res.execution_location if first_res else None) or meta["execution_location"]
+        provider_type = execution_provider or (model_cfg.provider_type if model_cfg else None)
+        provider_model_id = (
+            (model_cfg.provider_model_id if model_cfg else None)
+            or (first_res.provider_model_id if first_res else None)
+            or meta["runtime_model_id"]
+        )
+        pricing_source = model_cfg.pricing_source if model_cfg else None
+
+        # Truthful multi-dimensional cost accounting
+        # Distinguish: local API invoice (known $0.00) vs local compute cost vs total cost
+        has_configured_local_compute = (
+            model_cfg is not None
+            and (
+                (model_cfg.local_compute_cost_per_second is not None and model_cfg.local_compute_cost_per_second >= 0)
+                or (model_cfg.local_compute_price_per_million is not None and model_cfg.local_compute_price_per_million >= 0)
+            )
+        )
+
         costs = [
             r.cost_usd for r in model_res_list if r.status == "success" and r.cost_usd is not None
         ]
-        unknown_cost_count = sum(
-            1 for r in model_res_list if r.status == "success" and r.cost_usd is None
-        )
 
-        total_cost_usd = None
-        cost_per_q_usd = None
-        if unknown_cost_count == 0 and len(costs) == successful and successful > 0:
-            total_cost_usd = round(sum(costs), 6)
-            cost_per_q_usd = round(total_cost_usd / successful, 6)
-
-        # Model configs lookup
-        model_cfg = next((c for c in run.model_configs if c.model_id == model_id), None)
-        provider_type = model_cfg.provider_type if model_cfg else None
-        provider_model_id = (
-            model_cfg.provider_model_id
-            if model_cfg
-            else (model_res_list[0].provider_model_id if model_res_list else None)
-        )
-        pricing_source = model_cfg.pricing_source if model_cfg else None
+        if execution_location == "local":
+            provider_api_cost_usd = 0.0 if successful > 0 else None
+            if has_configured_local_compute:
+                comp_costs = [
+                    r.local_compute_cost_usd for r in model_res_list if r.status == "success" and r.local_compute_cost_usd is not None
+                ]
+                if len(comp_costs) == successful and successful > 0:
+                    local_compute_cost_usd = round(sum(comp_costs), 6)
+                    total_cost_usd = round(local_compute_cost_usd, 6)
+                    cost_per_q_usd = round(total_cost_usd / successful, 6)
+                    unknown_cost_count = 0
+                else:
+                    local_compute_cost_usd = None
+                    total_cost_usd = None
+                    cost_per_q_usd = None
+                    unknown_cost_count = successful
+            else:
+                # No local compute hardware rate configured -> compute cost and total cost are strictly unknown
+                local_compute_cost_usd = None
+                total_cost_usd = None
+                cost_per_q_usd = None
+                unknown_cost_count = successful
+        elif execution_location == "remote":
+            local_compute_cost_usd = 0.0 if successful > 0 else None
+            unknown_cost_count = sum(
+                1 for r in model_res_list if r.status == "success" and r.cost_usd is None
+            )
+            if unknown_cost_count == 0 and len(costs) == successful and successful > 0:
+                total_cost_usd = round(sum(costs), 6)
+                cost_per_q_usd = round(total_cost_usd / successful, 6)
+                provider_api_cost_usd = total_cost_usd
+            else:
+                total_cost_usd = None
+                cost_per_q_usd = None
+                provider_api_cost_usd = None
+        else:
+            provider_api_cost_usd = None
+            local_compute_cost_usd = None
+            total_cost_usd = None
+            cost_per_q_usd = None
+            unknown_cost_count = successful
 
         model_metrics[model_id] = ModelScoringSummary(
             model_id=model_id,
             display_name=display_name,
             provider_type=provider_type,
             provider_model_id=provider_model_id,
+            model_source=model_source,
+            source_repo_id=source_repo_id,
+            execution_provider=execution_provider,
+            execution_location=execution_location,
             attempted_questions=attempted,
             successful_generations=successful,
             correct_answers=correct,
@@ -452,6 +524,8 @@ def calculate_benchmark_scores(
             total_tokens=tot_tokens,
             token_provenance=token_provenance,
             missing_usage_count=missing_usage,
+            provider_api_cost_usd=provider_api_cost_usd,
+            local_compute_cost_usd=local_compute_cost_usd,
             total_cost_usd=total_cost_usd,
             cost_per_question_usd=cost_per_q_usd,
             unknown_cost_count=unknown_cost_count,

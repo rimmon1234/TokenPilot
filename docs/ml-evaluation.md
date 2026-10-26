@@ -64,14 +64,26 @@ Milestone M4 introduces reproducible evaluation harnesses and standardized bench
   - Benchmark Lab execution modal, active progress bar polling, and canonical results viewer.
 - **M4.2.2 — GSM8K Evaluation & Scoring** (Implemented):
   - In-process deterministic scoring of saved GSM8K completions without additional LLM API calls or LLM judges.
-  - Multi-priority answer extraction hierarchy:
-    1. Canonical delimiter `#### <number>`
-    2. LaTeX notation `\boxed{<number>}`
-    3. Explicit natural language phrases: `(The|the)?\s*(final\s+)?answer\s*(is|:)\s*<number>`
-    4. Concluding sentences with target quantities (`Total cost is $64`, `makes $18 every day`)
-    5. Concluding equations (`= <number>`)
-    6. Standalone terminal line numbers
-  - Intermediate number avoidance: reasoning chains containing intermediate calculations are not parsed by blindly picking the first or last number.
+  - Multi-priority deterministic answer extraction hierarchy:
+    1. Canonical delimiter `#### <number>` (with multi-match conflict detection).
+    2. LaTeX notation `\boxed{<number>}` (with multi-match conflict detection).
+    3. Explicit natural language answer phrases (e.g. `(final|correct)?\s*answer\s*(is|:)\s*<number>`, `result/total/value/sum/weight is <number>`).
+    4. Discourse-introduced answer statements (e.g. `Therefore / So, the answer is <number>`).
+    5. Natural-language concluding sentences in terminal lines:
+       - Modal/recommendation verbs with indirect objects (e.g. `So, Julie should read 42 pages tomorrow`, `Wendi needs to give her chickens 20 cups`).
+       - Time taken (e.g. `Therefore, it takes Carla 120 minutes`).
+       - Quantity/topic nouns with linking verbs (e.g. `The final weight is 16 pounds`, `The total cost is $64`).
+       - Spending & cost verbs (e.g. `Albert spends $40 on food`).
+       - Existentials (e.g. `In total, there were 121 people`).
+       - Passive constructions (e.g. `So, 1080 beetles are eaten each day`).
+       - Action verbs with discourse markers or ending adverbials (e.g. `Albert eats 48 slices of pizza that day`, `Bella bought 38 stamps in all`).
+    6. Concluding equations (`= <number>` optionally followed by units).
+    7. Standalone terminal line numbers.
+  - Deterministic disambiguation & safety guarantees:
+    - Intermediate calculation avoidance: intermediate equations within reasoning chains (e.g. `84 / 2 = 42 pages.`) do not override final conclusion sentences or trigger unanchored number extraction.
+    - Multi-candidate conflict resolution: when multiple answer markers or conclusion candidates are found, their normalized decimal values are compared; if they disagree, the response is safely kept as `unparseable` (`unparseable_conflicting_answers`) rather than guessing.
+    - Trailing modifiers protection: non-target quantities in trailing prepositional phrases (e.g. `in 3 days`, `for 20 guests`) are not extracted in place of the target quantity.
+    - Truly truncated or ambiguous completions (e.g. cut off mid-sentence) remain `unparseable`.
   - Number normalization & exact comparison:
     - Strips markdown formatting (`**`, `__`), unicode minus (`−`), currency symbols (`$`, `€`, `£`, `¥`), and thousands commas (`1,000`).
     - Python `Decimal` quantization and comparison for exact mathematical equivalence (e.g. `12` == `12.0`).

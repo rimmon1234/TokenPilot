@@ -63,51 +63,78 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
         return None, None
 
     # Priority 1: Canonical GSM8K delimiter '#### <number>'
-    match = re.search(r"####\s*([^\n\r]+)", text)
-    if match:
-        val = clean_candidate_number(match.group(1))
-        if val is not None:
-            return val, "gsm8k_hash"
+    hash_matches = re.findall(r"####\s*([^\n\r]+)", text)
+    if hash_matches:
+        candidates = [clean_candidate_number(m) for m in hash_matches]
+        valid_candidates = [c for c in candidates if c is not None]
+        if valid_candidates:
+            try:
+                first_dec = Decimal(valid_candidates[0])
+                if all(Decimal(c) == first_dec for c in valid_candidates[1:]):
+                    return valid_candidates[0], "gsm8k_hash"
+            except Exception:
+                if len(set(valid_candidates)) == 1:
+                    return valid_candidates[0], "gsm8k_hash"
+            return None, None
 
     # Priority 2: LaTeX boxed representation: '\boxed{<number>}'
-    match = re.search(r"\\boxed\{([^}]+)\}", text)
-    if match:
-        val = clean_candidate_number(match.group(1))
-        if val is not None:
-            return val, "latex_boxed"
+    boxed_matches = re.findall(r"\\boxed\{([^}]+)\}", text)
+    if boxed_matches:
+        candidates = [clean_candidate_number(m) for m in boxed_matches]
+        valid_candidates = [c for c in candidates if c is not None]
+        if valid_candidates:
+            try:
+                first_dec = Decimal(valid_candidates[0])
+                if all(Decimal(c) == first_dec for c in valid_candidates[1:]):
+                    return valid_candidates[0], "latex_boxed"
+            except Exception:
+                if len(set(valid_candidates)) == 1:
+                    return valid_candidates[0], "latex_boxed"
+            return None, None
 
     # Priority 3: Explicit final answer statements
     final_patterns = [
-        r"(?i)(?:the\s+)?final\s+answer\s+(?:is|equals|=|:)\s*:?\s*([^\n\r.]+)",
+        r"(?i)(?:the\s+)?final\s+(?:answer|result|value|total|amount|weight|cost)\s+(?:is|equals|=|:)\s*:?\s*([^\n\r.]+)",
         r"(?i)final\s+answer\s*:\s*([^\n\r.]+)",
     ]
+    cand_finals = []
     for pat in final_patterns:
-        match = re.search(pat, text)
-        if match:
-            val = clean_candidate_number(match.group(1))
+        for m in re.finditer(pat, text):
+            val = clean_candidate_number(m.group(1))
             if val is not None:
-                return val, "final_answer_phrase"
+                cand_finals.append(val)
+    if cand_finals:
+        try:
+            first_dec = Decimal(cand_finals[0])
+            if all(Decimal(c) == first_dec for c in cand_finals[1:]):
+                return cand_finals[0], "final_answer_phrase"
+        except Exception:
+            if len(set(cand_finals)) == 1:
+                return cand_finals[0], "final_answer_phrase"
+        return None, None
 
     # Priority 4: Explicit answer statements at beginning of line or clause
     ans_patterns = [
-        r"(?i)(?:^|\n|\.\s+)(?:so\s*,?\s*the|therefore\s*,?\s*the|thus\s*,?\s*the|hence\s*,?\s*the|in\s+conclusion\s*,?\s*the)?\s*answer\s*(?:is|equals|=|:)\s*:?\s*([^\n\r.]+)",
+        r"(?i)(?:^|\n|[.!?]\s+)(?:[a-zA-Z,]+\s+)*(?:the\s+)?(?:answer|result|total|sum)\s*(?:is|equals|=|:)\s*:?\s*([^\n\r.]+)",
+        r"(?i)(?:^|\n)(?:answer|result|total)\s*:\s*([^\n\r.]+)",
     ]
+    cand_ans = []
     for pat in ans_patterns:
-        match = re.search(pat, text)
-        if match:
-            val = clean_candidate_number(match.group(1))
+        for m in re.finditer(pat, text):
+            val = clean_candidate_number(m.group(1))
             if val is not None:
-                return val, "answer_phrase"
+                cand_ans.append(val)
+    if cand_ans:
+        try:
+            first_dec = Decimal(cand_ans[0])
+            if all(Decimal(c) == first_dec for c in cand_ans[1:]):
+                return cand_ans[0], "answer_phrase"
+        except Exception:
+            if len(set(cand_ans)) == 1:
+                return cand_ans[0], "answer_phrase"
+        return None, None
 
-    # Priority 5: Concluding sentences with explicit conclusion verbs and target amount
-    # Handles natural LLM completions (e.g. Llama 3.2, Qwen):
-    # - "So, Janet makes $18 every day at the farmers' market."
-    # - "It takes 3 bolts in total to make the robe."
-    # - "Josh made a profit of $70,000."
-    # - "Eliza's earnings for this week are $460."
-    # - "Therefore, it takes Carla 120 minutes (or 2 hours) to download the file."
-    # - "So, Toulouse, Charleston, and Seattle have a total of 260 sheep together."
-    # - "John is 215 miles away from home at the end of the 4 hours."
+    # Priority 5: Concluding sentences with explicit conclusion patterns
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     terminal_candidates = []
     if lines:
@@ -116,26 +143,28 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
             terminal_candidates.append(" ".join(lines[-2:]))
 
     concluding_patterns = [
-        # Topic noun + verb + amount (e.g. Eliza's earnings for this week are $460, Josh made a profit of $70,000)
-        r"(?i)(?:earnings|profit|total(?:\s+cost|\s+distance|\s+amount|\s+number|\s+time)?|cost|price|distance|amount|remainder)\s*[^.\n]*?\b(?:is|are|was|were|=|equals|came to|of)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # Concluding verb with amount: "made a profit of $70,000", "Janet makes $18", "needs to pay $64"
-        r"(?i)\b(?:needs?\s+to\s+pay|spent|spends|paid|cost|costs)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        r"(?i)\b(?:makes?|made|earns?|earned|received?|gets?|got|sells?|sold|leaves?|left)\s+(?:a\s+profit\s+of\s+|an\s+earnings?\s+of\s+|a\s+total\s+of\s+|only\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "takes Carla 120 minutes", "takes 3 bolts in total"
+        # 1. Recommendation / modal verb + action verb + amount: 'Julie should read 42 pages', 'needs to give her chickens 20 cups', 'needs to pay $64'
+        r"(?i)\b(?:should|needs?\s+to|must|will|would|can|has\s+to|had\s+to)\s+(?:[a-zA-Z]+\s+){1,4}(?:a\s+total\s+of\s+|about\s+|only\s+|an\s+additional\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 2. Time taken: 'takes Carla 120 minutes', 'takes 3 bolts in total'
         r"(?i)\b(?:takes?|took)(?:\s+[a-zA-Z]+)?\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "needs to give her chickens 20 cups"
-        r"(?i)\b(?:needs?\s+to\s+(?:give|feed|buy|use|have|pay|add|subtract))(?:\s+[^.\d\n]{1,30})?\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "have/has a total of 260 sheep"
-        r"(?i)\b(?:have|has|had)\s+(?:a\s+total\s+of|in\s+total)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "runs a total of 540 meters"
-        r"(?i)\b(?:runs?|ran|walks?|walked|drives?|drove)\s+(?:a\s+total\s+of\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "[Subject] is/are [amount] [units] away/left/remaining/in total"
+        # 3. Topic noun + verb + amount: 'final weight ... is 16 pounds', 'the total is 42 pages', 'profit of $70,000'
+        r"(?i)\b(?:the\s+)?(?:final\s+)?(?:weight|cost|price|distance|amount|remainder|total(?:\s+cost|\s+distance|\s+amount|\s+number|\s+time)?|number|count|earnings?|profit|value|time|length|height|width|sum)\s*[^.\n]*?\b(?:is|are|was|were|=|equals|came\s+to|of)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 4. Cost and spending verbs: 'Jasper spends $45...', 'needs to pay $64', 'costs $18'
+        r"(?i)\b(?:needs?\s+to\s+pay|spends?|spent|paid|pays?|cost|costs?)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 5. Existence: 'there were 121 people on the ship'
+        r"(?i)\b(?:there\s+(?:is|are|was|were|will\s+be))\s+(?:a\s+total\s+of\s+|about\s+|only\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 6. Passive conclusion: '1080 beetles are eaten each day'
+        r"(?i)\b(?:so|therefore|thus|hence|in total|in all|altogether|this means(?:\s+that)?)\s*,?\s*([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)\s+(?:[a-zA-Z%]+\s+)*(?:are|were|was|is|will\s+be)\s+(?:eaten|read|written|bought|sold|consumed|needed|required|used|left|remaining|produced|spent|paid|collected)",
+        # 7. Discourse marker + action verb: 'So, Julie reads 42...', 'Therefore, James writes 624 pages...'
+        r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|this means(?:\s+that)?|as a result)\s*,?\s*[^.\n]*?\b(?:reads?|wrote|writes?|ate|eats?|bought|buys?|paid|pays?|spent|spends?|made|makes?|earned|earns?|had|has|have|got|gets?|received?|receives?|took|takes?|used|uses?|gave|gives?|ran|runs?|walked|walks?|drove|drives?|shoveled?|shovels?|planted?|plants?|consumed?|consumes?|collected?|collects?|cooked?|cooks?|baked?|bakes?|sold|sells?|leaves?|left|cost|costs?)\s+(?:a\s+total\s+of\s+|about\s+|only\s+|an\s+additional\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 8. Action verb + concluding adverbial phrase at end of sentence: 'Albert eats 48 slices of pizza that day.', 'Bella bought 38 stamps in all.'
+        r"(?i)\b(?:reads?|wrote|writes?|ate|eats?|bought|buys?|paid|pays?|spent|spends?|made|makes?|earned|earns?|got|gets?|received?|receives?|took|takes?|used|uses?|gave|gives?|ran|runs?|walked|walks?|drove|drives?|shoveled?|shovels?|planted?|plants?|consumed?|consumes?|collected?|collects?|cooked?|cooks?|baked?|bakes?|sold|sells?|cost|costs?)\s+(?:a\s+total\s+of\s+|about\s+|only\s+|an\s+additional\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)\s*(?:[a-zA-Z%]+\s+)*(?:in\s+all|in\s+total|altogether|that\s+day|each\s+day|per\s+day|a\s+day|a\s+week|per\s+week|a\s+year|per\s+year|in\s+a\s+year|tomorrow|yesterday)\b",
+        # 9. '[Subject] is/are [amount] [units] away/left/remaining/in total'
         r"(?i)\b(?:is|are|was|were)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)\s*(?:miles?|meters?|km|feet|inches|minutes?|hours?|days?|weeks?|years?|bolts?|cups?|sheep|eggs?|dollars?|cents?|glasses?|away|left|remaining|in total)",
-        # Broad conclusion fallback
-        r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|in conclusion)\s*,?\s*[^.\n]*?\b(?:is|are|equals|=|makes|takes|has|have|gets|needs|earns|sells|leaves|pays|cost|costs|runs|walks|eats|spent|spends|paid)\s+(?:a total of\s+|only\s+)?(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\b",
+        # 10. Broad discourse fallback
+        r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|in conclusion|this means(?:\s+that)?)\s*,?\s*[^.\n]*?\b(?:is|are|was|were|equals|=|makes?|made|takes?|took|has|have|had|gets?|got|needs?|needed|earns?|earned|sells?|sold|leaves?|left|pays?|paid|cost|costs?|runs?|ran|walks?|walked|eats?|ate|spent|spends?)\s+(?:a\s+total\s+of\s+|only\s+)?(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\b",
     ]
 
-    # Check terminal lines first (prevents intermediate calculations from matching)
     for sample in terminal_candidates:
         for pat in concluding_patterns:
             match = re.search(pat, sample)
@@ -146,7 +175,7 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
 
     # Search backwards from the end across the full text ONLY for sentences with explicit discourse markers
     # (e.g. "So, ...", "Therefore, ..."). Never match plain premise sentences like "She had 10 apples."
-    discourse_pattern = r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|in conclusion)\s*,?\s*[^.\n]*?\b(?:is|are|equals|=|makes|takes|has|have|gets|needs|earns|sells|leaves|pays|cost|costs|runs|walks|eats|spent|spends|paid)\s+(?:a total of\s+|only\s+)?(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\b"
+    discourse_pattern = r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|in conclusion|this means(?:\s+that)?)\s*,?\s*[^.\n]*?\b(?:is|are|was|were|equals|=|makes?|made|takes?|took|has|have|had|gets?|got|needs?|needed|earns?|earned|sells?|sold|leaves?|left|pays?|paid|cost|costs?|runs?|ran|walks?|walked|eats?|ate|spent|spends?|reads?|wrote|writes?|bought|buys?|eats?|ate)\s+(?:a\s+total\s+of\s+|only\s+)?(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\b"
     matches = list(re.finditer(discourse_pattern, text))
     if matches:
         last_match = matches[-1]
@@ -154,8 +183,8 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
         if val is not None:
             return val, "concluding_statement"
 
-    # Priority 6: Concluding equation at the very end of response: "= 18" or "= $18"
-    match = re.search(r"=\s*(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\.?\s*$", text)
+    # Priority 6: Concluding equation at the very end of response: "= 18" or "= $18" or "= 42 pages."
+    match = re.search(r"=\s*(\$?\s*[-+]?[\d,]+(?:\.\d+)?)(?:\s+[a-zA-Z%]+)?\.?\s*$", text)
     if match:
         val = clean_candidate_number(match.group(1))
         if val is not None:
@@ -165,8 +194,6 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if lines:
         last_line = lines[-1]
-        # Check if the last line contains exactly one number and nothing else besides unit/label
-        # e.g. "42", "$42", "42.", "3 bolts", "Answer: 42"
         simple_match = re.match(r"^[\$€£¥\s]*[-+]?[\d,]+(?:\.\d+)?(?:\s+[a-zA-Z%]+)?\.?$", last_line)
         if simple_match:
             val = clean_candidate_number(last_line)

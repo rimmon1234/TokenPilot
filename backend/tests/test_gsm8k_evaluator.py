@@ -97,6 +97,136 @@ def test_extract_gsm8k_model_answer_empty_or_text_only():
     assert extract_gsm8k_model_answer("I cannot solve this problem.")[0] is None
 
 
+def test_extract_gsm8k_julie_example():
+    """Exact failure reported by user where natural-language recommendation conclusion was marked unparseable."""
+    julie_output = (
+        "The book has 120 pages, and Julie has already read 36 pages.\n\n"
+        "120 - 36 = 84 pages left.\n\n"
+        "Julie wants to read half of the remaining pages tomorrow. Half of 84 is:\n\n"
+        "84 / 2 = 42 pages.\n\n"
+        "So, Julie should read 42 pages tomorrow."
+    )
+    ans, method = extract_gsm8k_model_answer(julie_output)
+    assert ans == "42"
+    assert method == "concluding_statement"
+    assert compare_gsm8k_answers(ans, "42") is True
+    assert compare_gsm8k_answers(ans, "42.0") is True
+
+    # Test full result evaluation
+    res = BenchmarkResult(
+        id="res-julie",
+        run_id="run-julie",
+        dataset_manifest_id="ds-gsm8k",
+        dataset_id="gsm8k",
+        dataset_revision="main",
+        source_split="train",
+        record_id="rec-julie",
+        content_hash="hash",
+        model_id="llama3.2:3b",
+        provider_model_id="llama3.2:3b",
+        model_display_name="Llama 3.2 3B",
+        status="success",
+        prompt_text="Julie is reading a 120-page book...",
+        reference_answer="First find... <<84/2=42>>42\n#### 42",
+        reference_metadata={"extracted_answer": "42"},
+        output_text=julie_output,
+        latency_ms=3500.0,
+    )
+    evaluated = evaluate_gsm8k_result(res)
+    assert evaluated.extracted_answer == "42"
+    assert evaluated.evaluation_status == EvaluationOutcome.CORRECT
+    assert evaluated.score == 1.0
+
+
+def test_extract_gsm8k_natural_language_conclusions():
+    """Verify various natural language concluding phrases across models."""
+    cases = [
+        ("So, Julie should read 42 pages tomorrow.", "42"),
+        ("Therefore, the answer is 42.", "42"),
+        ("The result is 42.", "42"),
+        ("She should read 42 pages.", "42"),
+        ("The total is 42 pages.", "42"),
+        ("Therefore, James writes 624 pages in a year.", "624"),
+        ("Albert eats 48 slices of pizza that day.", "48"),
+        ("The final weight of the box of goodies is 16 pounds.", "16"),
+        ("So, there were 121 people on the ship the monster ate in the first hundred years.", "121"),
+        ("Bella bought 38 stamps in all.", "38"),
+        ("So, 1080 beetles are eaten each day.", "1080"),
+        ("John is 215 miles away from home at the end of the 4 hours.", "215"),
+    ]
+    for text, expected in cases:
+        ans, method = extract_gsm8k_model_answer(text)
+        assert ans == expected, f"Failed for text: '{text}' (got {ans})"
+        assert method in ("concluding_statement", "answer_phrase", "final_answer_phrase")
+
+
+def test_extract_gsm8k_intermediate_numbers_and_units():
+    """Ensure intermediate numbers or trailing unit counts do not override the final answer."""
+    # Sentence contains target amount '42' followed by duration 'in 3 days'
+    text1 = "Calculations...\nSo, Julie should read 42 pages in 3 days."
+    ans, _ = extract_gsm8k_model_answer(text1)
+    assert ans == "42"
+
+    # Target amount '60' followed by guest count 'for 20 guests'
+    text2 = "Step 1: 30 * 2 = 60.\nShe should prepare 60 cupcakes for 20 guests."
+    ans, _ = extract_gsm8k_model_answer(text2)
+    assert ans == "60"
+
+    # Concluding equation with trailing unit: "= 42 pages."
+    text3 = "84 / 2 = 42 pages."
+    ans, _ = extract_gsm8k_model_answer(text3)
+    assert ans == "42"
+
+
+def test_extract_gsm8k_incorrect_and_conflicting_answers():
+    """Incorrect reasoning must remain incorrect, and conflicting conclusions must remain unparseable."""
+    # 1. Model arrives at incorrect answer (0 instead of reference 5)
+    tobias_output = (
+        "Let x be the number of driveways he shoveled.\n"
+        "$7x = $0\n"
+        "x = $0 / $7\n"
+        "x = 0\n\n"
+        "This means that Tobias shoveled 0 driveways."
+    )
+    ans, method = extract_gsm8k_model_answer(tobias_output)
+    assert ans == "0"
+    assert compare_gsm8k_answers(ans, "5") is False
+
+    res_incorrect = BenchmarkResult(
+        id="res-tobias",
+        run_id="run-tobias",
+        dataset_manifest_id="ds-gsm8k",
+        dataset_id="gsm8k",
+        dataset_revision="main",
+        source_split="train",
+        record_id="rec-tobias",
+        content_hash="hash",
+        model_id="llama3.2:3b",
+        provider_model_id="llama3.2:3b",
+        model_display_name="Llama 3.2 3B",
+        status="success",
+        prompt_text="Tobias is buying a new pair of shoes...",
+        reference_answer="#### 5",
+        reference_metadata={"extracted_answer": "5"},
+        output_text=tobias_output,
+        latency_ms=2500.0,
+    )
+    evaluated_incorrect = evaluate_gsm8k_result(res_incorrect)
+    assert evaluated_incorrect.extracted_answer == "0"
+    assert evaluated_incorrect.evaluation_status == EvaluationOutcome.INCORRECT
+    assert evaluated_incorrect.score == 0.0
+
+    # 2. Conflicting answers in the same response
+    conflicting_text = "The answer is 42. However, after rechecking, the answer is 36."
+    ans_conf, _ = extract_gsm8k_model_answer(conflicting_text)
+    assert ans_conf is None
+
+    # 3. Truncated output genuinely cannot be extracted
+    truncated = "To determine how much money Tina"
+    ans_trunc, _ = extract_gsm8k_model_answer(truncated)
+    assert ans_trunc is None
+
+
 def test_compare_gsm8k_answers():
     assert compare_gsm8k_answers("18", "18") is True
     assert compare_gsm8k_answers("18.0", "18") is True

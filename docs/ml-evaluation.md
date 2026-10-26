@@ -64,14 +64,26 @@ Milestone M4 introduces reproducible evaluation harnesses and standardized bench
   - Benchmark Lab execution modal, active progress bar polling, and canonical results viewer.
 - **M4.2.2 — GSM8K Evaluation & Scoring** (Implemented):
   - In-process deterministic scoring of saved GSM8K completions without additional LLM API calls or LLM judges.
-  - Multi-priority answer extraction hierarchy:
-    1. Canonical delimiter `#### <number>`
-    2. LaTeX notation `\boxed{<number>}`
-    3. Explicit natural language phrases: `(The|the)?\s*(final\s+)?answer\s*(is|:)\s*<number>`
-    4. Concluding sentences with target quantities (`Total cost is $64`, `makes $18 every day`)
-    5. Concluding equations (`= <number>`)
-    6. Standalone terminal line numbers
-  - Intermediate number avoidance: reasoning chains containing intermediate calculations are not parsed by blindly picking the first or last number.
+  - Multi-priority deterministic answer extraction hierarchy:
+    1. Canonical delimiter `#### <number>` (with multi-match conflict detection).
+    2. LaTeX notation `\boxed{<number>}` (with multi-match conflict detection).
+    3. Explicit natural language answer phrases (e.g. `(final|correct)?\s*answer\s*(is|:)\s*<number>`, `result/total/value/sum/weight is <number>`).
+    4. Discourse-introduced answer statements (e.g. `Therefore / So, the answer is <number>`).
+    5. Natural-language concluding sentences in terminal lines:
+       - Modal/recommendation verbs with indirect objects (e.g. `So, Julie should read 42 pages tomorrow`, `Wendi needs to give her chickens 20 cups`).
+       - Time taken (e.g. `Therefore, it takes Carla 120 minutes`).
+       - Quantity/topic nouns with linking verbs (e.g. `The final weight is 16 pounds`, `The total cost is $64`).
+       - Spending & cost verbs (e.g. `Albert spends $40 on food`).
+       - Existentials (e.g. `In total, there were 121 people`).
+       - Passive constructions (e.g. `So, 1080 beetles are eaten each day`).
+       - Action verbs with discourse markers or ending adverbials (e.g. `Albert eats 48 slices of pizza that day`, `Bella bought 38 stamps in all`).
+    6. Concluding equations (`= <number>` optionally followed by units).
+    7. Standalone terminal line numbers.
+  - Deterministic disambiguation & safety guarantees:
+    - Intermediate calculation avoidance: intermediate equations within reasoning chains (e.g. `84 / 2 = 42 pages.`) do not override final conclusion sentences or trigger unanchored number extraction.
+    - Multi-candidate conflict resolution: when multiple answer markers or conclusion candidates are found, their normalized decimal values are compared; if they disagree, the response is safely kept as `unparseable` (`unparseable_conflicting_answers`) rather than guessing.
+    - Trailing modifiers protection: non-target quantities in trailing prepositional phrases (e.g. `in 3 days`, `for 20 guests`) are not extracted in place of the target quantity.
+    - Truly truncated or ambiguous completions (e.g. cut off mid-sentence) remain `unparseable`.
   - Number normalization & exact comparison:
     - Strips markdown formatting (`**`, `__`), unicode minus (`−`), currency symbols (`$`, `€`, `£`, `¥`), and thousands commas (`1,000`).
     - Python `Decimal` quantization and comparison for exact mathematical equivalence (e.g. `12` == `12.0`).
@@ -115,4 +127,175 @@ Milestone M4 introduces reproducible evaluation harnesses and standardized bench
     - **JSON Export**: Complete run metadata, configuration snapshots, per-model scoring summaries, latency percentiles, and individual evaluation records.
     - **CSV Export**: Clean RFC 4180 compliant CSV format with run metadata comments, Model Performance Summary table, and Detailed Evaluation Records table. Escapes quotes, commas, and line breaks safely.
     - **Secret Exclusion Guarantee**: Excludes API tokens, transient credentials, and workspace secrets. Missing values are represented as explicit `null` / `Unknown` states without synthetic inflation.
+
+---
+
+## 5. Model Source and Execution Metadata Disambiguation
+
+TokenPilot strictly distinguishes between the origin of a model and the runtime executing it:
+
+1. **Model Source (`model_source`)**: Where the weights or model card were discovered (e.g. `huggingface_hub`, `ollama_library`, `google_ai_studio`, `custom`).
+2. **Source Repository ID (`source_repo_id`)**: Upstream repository identifier (e.g. `Qwen/Qwen2.5-Coder-7B-Instruct`).
+3. **Execution Provider (`execution_provider`)**: Service actively running inference (e.g. `ollama`, `vllm`, `huggingface_inference_providers`, `openai`, `gemini`).
+4. **Execution Mode (`execution_mode`)**: Gateway adapter type (`local_openai_compatible`, `huggingface_inference_providers`, etc.).
+5. **Execution Location (`execution_location`)**: Boundary locality (`local` or `remote`).
+6. **Runtime Model ID (`provider_model_id`)**: Specific identifier passed to the runtime engine (e.g. `qwen2.5-coder:7b`).
+
+**Concrete Example (Qwen 2.5 Coder 7B)**:
+- **Display Name**: Qwen 2.5 Coder 7B Instruct
+- **Model Source**: Hugging Face Hub (`huggingface_hub`)
+- **Source Repo ID**: `Qwen/Qwen2.5-Coder-7B-Instruct`
+- **Execution Provider**: Ollama (`ollama`)
+- **Execution Location**: Local (`local`)
+- **Runtime Model ID**: `qwen2.5-coder:7b`
+
+Execution metadata is resolved from the effective configuration snapshot captured at benchmark execution time, not guessed from the display name.
+
+---
+
+## 6. Truthful Local-Model Cost Accounting & Pareto Integrity
+
+A local model executed via Ollama has no per-token cloud inference invoice. However, this does **not** mean total inference cost is zero.
+
+### Cost Model Dimensions
+
+TokenPilot separates three distinct cost dimensions:
+
+1. **Provider API Cost (`provider_api_cost_usd`)**:
+   - Billable API invoice charge from the provider.
+   - For local Ollama inference, this is a **known $0.00**.
+   - For remote providers, calculated as:
+     $$\text{API Cost} = \frac{\text{Prompt Tokens} \times \text{Input Price}}{1{,}000{,}000} + \frac{\text{Completion Tokens} \times \text{Output Price}}{1{,}000{,}000}$$
+2. **Local Compute Cost (`local_compute_cost_usd`)**:
+   - Estimated hardware and electricity cost.
+   - Configurable in Model Studio via:
+     - `local_compute_cost_per_second` (USD per second of inference latency)
+     - Or `local_compute_price_per_million` (amortized USD per 1M total tokens)
+   - If unconfigured, this remains **strictly unknown (`null`)**. TokenPilot never invents electricity or hardware depreciation figures.
+3. **Estimated Total Inference Cost (`total_cost_usd`)**:
+   - For local models: $\text{Provider API Cost} + \text{Local Compute Cost}$ **only when compute cost is known**. If local compute is unconfigured, total cost remains **strictly null**.
+   - For remote models: Equals the Provider API Cost.
+   - **Crucial Rule**: Unknown costs are never coerced to $0.00.
+
+### Pareto Frontier Handling
+
+- **Exclusion of Unpriced Models**: Models with unknown total cost are excluded from participating in the priced Pareto frontier (`is_pareto_efficient = None`).
+- **Unpriced Tier Shelf**: Unpriced local models are displayed in a dedicated, clearly labeled "Unpriced Tier" shelf above the comparison chart, allowing quality and latency evaluation without granting an artificial, unearned advantage on the cost frontier.
+- **Priced Models Only**: The Pareto frontier connects only models with known, valid total cost measurements and comparable accuracy metrics.
+
+---
+
+## 7. M5 Supervised ML Router Training-Data Preparation
+
+Milestone M5 will train a supervised machine learning quality predictor $\hat{Q}(m, x)$ that estimates whether candidate model $m$ will produce a correct answer for incoming prompt $x$.
+
+### Target Candidate Models
+
+The development pilot dataset is designed for:
+1. `llama3.2:3b` through local Ollama (`local`, `ollama`).
+2. `qwen2.5-coder:7b` through local Ollama (`local`, `ollama`).
+3. Google Gemini through the user's free-tier API key (only when explicitly selected; zero paid API calls permitted).
+
+### Split Discipline & Anti-Contamination Rules
+
+1. **Strict Upstream Split Isolation**:
+   - The M5 development pilot **must strictly use the GSM8K upstream `train` split**.
+   - The GSM8K upstream `test` split is permanently reserved as a held-out test evaluation benchmark and must **never** be used for training or fine-tuning the router.
+2. **Evaluation Role**:
+   - When importing the training subset, assign `evaluation_role = "dev_train"`.
+3. **Group-K Prompt Partitioning**:
+   - Partitioning into train and validation sets is strictly grouped by `prompt_id` (`record_id`).
+   - All candidate model evaluation outputs for a given prompt reside in the **same partition**.
+   - Zero prompt leakage: no question appearing in the training fold may ever appear in the held-out validation fold.
+
+### Manual Data Collection Procedure (Step-by-Step Runbook)
+
+To collect the M5 development pilot dataset without automated mass execution:
+
+#### Step 1: Import the GSM8K Training Subset
+1. Open TokenPilot UI and navigate to the **Dataset Lab** (`/datasets`).
+2. Click **Import Benchmark Dataset**.
+3. Select **GSM8K (Grade School Math 8K)**.
+4. Set **Source Split** to `train` (do **not** select `test`).
+5. Set **Evaluation Role** to `dev_train`.
+6. Set **Subset Size** to `25` (or `50` for extended pilot).
+7. Keep default **Sampling Seed** `42`.
+8. Click **Import & Verify**.
+9. Confirm that the manifest is created with `validation_status = "verified"` and role `dev_train`.
+
+*Alternative via Backend API / curl*:
+```bash
+curl -X POST http://localhost:8000/api/datasets/import \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_id": "gsm8k",
+    "split": "train",
+    "subset_size": 25,
+    "seed": 42,
+    "evaluation_role": "dev_train"
+  }'
+```
+
+#### Step 2: Verify Local Runtime Availability
+1. Ensure Ollama is active on `http://localhost:11434`.
+2. Verify both candidate models are loaded in Ollama:
+   ```bash
+   ollama list
+   ```
+   Confirm `llama3.2:3b` and `qwen2.5-coder:7b` are present.
+3. In TokenPilot **Model Studio**, verify both models are enabled and report `Connected`.
+
+#### Step 3: Run Sequential Benchmark Evaluation
+1. Navigate to **Benchmark Lab** (`/benchmarks`).
+2. Click **New Benchmark Run**.
+3. Select the imported `GSM8K (train)` dataset manifest (verify role: `dev_train`).
+4. Select the two candidate local models:
+   - `Llama 3.2 3B`
+   - `Qwen 2.5 Coder 7B Instruct`
+5. Set **Concurrency** to `1` (sequential execution ensures fair latency telemetry without GPU contention).
+6. Set **Temperature** to `0.0` (deterministic evaluation).
+7. Click **Launch Benchmark Run**.
+8. Monitor progress in the execution modal until 100% completed.
+
+#### Step 4: Evaluate and Score Run
+1. Click **Evaluate & Score** in the Benchmark Lab.
+2. The deterministic GSM8K evaluator parses model answers, extracts numbers, and verifies exact match against the canonical reference.
+3. Export the scored results:
+   ```bash
+   curl http://localhost:8000/api/benchmarks/runs/{run_id}/export?format=json -o m5_pilot_run.json
+   ```
+
+#### Step 5: Convert and Partition for M5 Router Training
+Use the `app.services.benchmark.m5_collector` utility:
+```python
+from app.services.benchmark.m5_collector import (
+    build_m5_pilot_record,
+    partition_m5_records_by_prompt
+)
+from app.services.benchmark.storage import benchmark_storage
+
+run = benchmark_storage.get_run(run_id)
+results = benchmark_storage.get_all_results(run_id)
+
+# 1. Transform to validated M5PilotRecords
+pilot_records = [build_m5_pilot_record(r, run) for r in results]
+
+# 2. Partition by prompt ID (80% train / 20% validation) with zero leakage
+train_records, val_records = partition_m5_records_by_prompt(
+    pilot_records, train_ratio=0.8, seed=42
+)
+```
+
+### Collection Record Integrity Requirements
+
+Every collected record stored for M5 model training strictly enforces:
+- `prompt_id`: Cluster key for Group-K validation.
+- `model_source` & `execution_provider`: Snapshots of origin and runtime.
+- `runtime_model_id` & `execution_location`: Precise deployment target.
+- `quality_score`: $1.0$ for `correct`, $0.0$ for `incorrect` or `unparseable`, `null` for `failed`.
+- Unparseable answers are never scored as correct.
+- Failed network requests are not treated as math reasoning failures.
+- Zero secrets: API keys and transient tokens are strictly barred from prompt text and serialized records.
+- Costs: Unpriced local compute is preserved as `null`, never coerced to zero.
+
 

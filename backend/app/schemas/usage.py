@@ -27,6 +27,8 @@ class PricingSnapshot(BaseModel):
     output_price_per_million: Optional[float] = None
     pricing_source: str = "unknown"
     is_free_tier: Optional[bool] = False
+    local_compute_cost_per_second: Optional[float] = None
+    local_compute_price_per_million: Optional[float] = None
 
 
 class UsageEventBase(BaseModel):

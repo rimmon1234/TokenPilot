@@ -62,6 +62,7 @@ import {
   deleteBenchmarkRun,
 } from '../services/benchmark_service';
 import { workspaceRepo } from '../storage/indexeddb_repository';
+import { resolveModelMetadata } from '../services/metadata_resolver';
 
 export const BenchmarkLabPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'templates' | 'imported' | 'runs' | 'comparison'>('templates');
@@ -283,6 +284,10 @@ export const BenchmarkLabPage: React.FC = () => {
     try {
       await deleteBenchmarkRun(runId);
       setBenchmarkRuns((prev) => prev.filter((r) => r.id !== runId));
+      if (activeRunId === runId) {
+        setActiveRunId(null);
+        setActiveRun(null);
+      }
       if (selectedComparisonRunId === runId) {
         const remaining = benchmarkRuns.filter((r) => r.id !== runId);
         setSelectedComparisonRunId(remaining.length > 0 ? remaining[0].id : null);
@@ -479,12 +484,24 @@ export const BenchmarkLabPage: React.FC = () => {
 
   const handleCancelActiveRun = async (runId: string) => {
     try {
-      await cancelBenchmarkRun(runId);
+      const updatedRun = await cancelBenchmarkRun(runId);
       setSuccessBanner(`Cancelled benchmark run '${runId}'.`);
-      if (activeRun) {
-        setActiveRun({ ...activeRun, status: 'cancelled' });
+      if (activeRun && activeRun.id === runId) {
+        setActiveRun({ ...activeRun, ...updatedRun, status: 'cancelled' });
       }
       setActiveRunId(null);
+      setBenchmarkRuns((prev) =>
+        prev.map((r) =>
+          r.id === runId
+            ? {
+                ...r,
+                ...updatedRun,
+                status: 'cancelled',
+                completed_at: updatedRun?.completed_at || new Date().toISOString(),
+              }
+            : r
+        )
+      );
     } catch (err: any) {
       setErrorBanner(`Failed to cancel run: ${err.message}`);
     }
@@ -1172,16 +1189,31 @@ export const BenchmarkLabPage: React.FC = () => {
                               ? `$${m.total_cost_usd.toFixed(4)}`
                               : null;
 
+                          const cfg = selectedComparisonRun?.model_configs?.find((c) => c.model_id === m.model_id);
+                          const resolved = resolveModelMetadata(m, cfg);
+
                           return (
                             <tr key={m.model_id} className="hover:bg-dark-800/40 transition-colors">
                               <td className="py-3 px-3.5">
                                 <div className="font-sans font-medium text-slate-100 flex items-center gap-1.5">
-                                  {m.display_name}
+                                  {resolved.displayName}
                                 </div>
-                                <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
-                                  <span>{m.provider_type}</span>
-                                  <span>•</span>
-                                  <span className="text-slate-300">{m.provider_model_id}</span>
+                                <div className="text-[10px] text-slate-400 font-mono flex flex-wrap items-center gap-1.5 mt-1">
+                                  <span className="px-1.5 py-0.5 rounded bg-dark-800 text-slate-300 border border-dark-700/60" title="Model Origin">
+                                    {resolved.source}
+                                  </span>
+                                  <span className="text-slate-600">•</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-cyan-950/40 text-cyan-300 border border-cyan-800/40" title="Execution Runtime Provider">
+                                    {resolved.runtime}
+                                  </span>
+                                  <span className="text-slate-600">•</span>
+                                  <span className="text-slate-400 font-sans" title="Execution Locality">
+                                    {resolved.location}
+                                  </span>
+                                  <span className="text-slate-600">•</span>
+                                  <span className="text-slate-300 font-mono" title="Runtime Model ID">
+                                    {resolved.runtimeModelId}
+                                  </span>
                                 </div>
                               </td>
 
@@ -1262,9 +1294,16 @@ export const BenchmarkLabPage: React.FC = () => {
                                 {totalCostStr !== null ? (
                                   <span className="text-slate-200">{totalCostStr}</span>
                                 ) : (
-                                  <span className="text-slate-500 italic text-[11px]">Unknown</span>
+                                  <div className="space-y-0.5">
+                                    <span className="text-slate-500 italic text-[11px]">Unknown</span>
+                                    {m.provider_api_cost_usd === 0 && (
+                                      <div className="text-[9px] text-cyan-400 font-sans">
+                                        API: $0.00 • Compute: Unpriced
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
-                                {(m.unknown_cost_count ?? 0) > 0 && (
+                                {(m.unknown_cost_count ?? 0) > 0 && totalCostStr !== null && (
                                   <div className="text-[10px] text-amber-400/90">
                                     {m.unknown_cost_count} unpriced
                                   </div>
@@ -1500,27 +1539,37 @@ export const BenchmarkLabPage: React.FC = () => {
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-                        {unpriced.map((m) => (
-                          <div
-                            key={m.model_id}
-                            className="p-3 rounded-lg bg-dark-900 border border-dark-750 flex items-center justify-between"
-                          >
-                            <div>
-                              <div className="text-xs font-medium text-slate-200">{m.display_name}</div>
-                              <div className="text-[10px] text-slate-400 font-mono">
-                                {m.provider_type} • {m.provider_model_id}
+                        {unpriced.map((m) => {
+                          const cfg = selectedComparisonRun?.model_configs?.find((c) => c.model_id === m.model_id);
+                          const resolved = resolveModelMetadata(m, cfg);
+                          return (
+                            <div
+                              key={m.model_id}
+                              className="p-3 rounded-lg bg-dark-900 border border-dark-750 flex items-center justify-between"
+                            >
+                              <div>
+                                <div className="text-xs font-medium text-slate-200">{resolved.displayName}</div>
+                                <div className="text-[10px] text-slate-400 font-mono flex flex-wrap items-center gap-1.5 mt-1">
+                                  <span className="text-slate-300">{resolved.source}</span>
+                                  <span className="text-slate-600">•</span>
+                                  <span className="text-cyan-300">{resolved.runtime}</span>
+                                  <span className="text-slate-600">•</span>
+                                  <span>{resolved.location}</span>
+                                  <span className="text-slate-600">•</span>
+                                  <span className="text-slate-300 font-mono">{resolved.runtimeModelId}</span>
+                                </div>
+                              </div>
+                              <div className="text-right font-mono">
+                                <div className="text-xs font-semibold text-cyan-300">
+                                  {m.scorable_accuracy !== null && m.scorable_accuracy !== undefined
+                                    ? `${(m.scorable_accuracy * 100).toFixed(1)}%`
+                                    : 'N/A'}
+                                </div>
+                                <div className="text-[10px] text-slate-500">Scorable Acc</div>
                               </div>
                             </div>
-                            <div className="text-right font-mono">
-                              <div className="text-xs font-semibold text-cyan-300">
-                                {m.scorable_accuracy !== null && m.scorable_accuracy !== undefined
-                                  ? `${(m.scorable_accuracy * 100).toFixed(1)}%`
-                                  : 'N/A'}
-                              </div>
-                              <div className="text-[10px] text-slate-500">Scorable Acc</div>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -1665,12 +1714,29 @@ export const BenchmarkLabPage: React.FC = () => {
                               </span>
 
                               {/* Model name & config */}
-                              <span className="text-xs font-semibold text-slate-100">
-                                {res.model_display_name}
-                              </span>
-                              <span className="text-[10px] font-mono text-slate-400">
-                                ({res.provider_model_id})
-                              </span>
+                              {(() => {
+                                const cfg = selectedComparisonRun?.model_configs?.find((c) => c.model_id === res.model_id);
+                                const resolved = resolveModelMetadata(res, cfg);
+                                return (
+                                  <>
+                                    <span className="text-xs font-semibold text-slate-100">
+                                      {resolved.displayName}
+                                    </span>
+                                    <span className="px-1.5 py-0.5 rounded bg-dark-800 text-[10px] text-slate-300 border border-dark-700/60" title="Model Origin">
+                                      {resolved.source}
+                                    </span>
+                                    <span className="px-1.5 py-0.5 rounded bg-cyan-950/40 text-[10px] text-cyan-300 border border-cyan-800/40" title="Execution Runtime Provider">
+                                      {resolved.runtime}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 font-sans" title="Execution Locality">
+                                      {resolved.location}
+                                    </span>
+                                    <span className="text-[10px] font-mono text-slate-300">
+                                      ({resolved.runtimeModelId})
+                                    </span>
+                                  </>
+                                );
+                              })()}
 
                               <span className="text-slate-600">•</span>
                               <span className="text-[11px] font-mono text-slate-400">
@@ -1697,6 +1763,10 @@ export const BenchmarkLabPage: React.FC = () => {
                               {res.cost_usd !== null && res.cost_usd !== undefined ? (
                                 <span className="text-emerald-400/90" title="Estimated cost">
                                   ${res.cost_usd.toFixed(5)}
+                                </span>
+                              ) : res.provider_api_cost_usd === 0 ? (
+                                <span className="text-cyan-400/90" title="Known local inference API invoice is $0.00, hardware compute cost unpriced">
+                                  API: $0.00 • Compute: Unpriced
                                 </span>
                               ) : (
                                 <span className="text-slate-500 italic">Cost: Unknown</span>

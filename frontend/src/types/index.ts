@@ -27,6 +27,9 @@ export interface ModelTemplate {
   execution_location: ExecutionLocation;
   provider_model_id: string;
   huggingface_repo_id?: string;
+  source_repo_id?: string;
+  model_source?: string;
+  execution_provider?: string;
   base_url?: string;
   license: string;
   gated_status: GatedStatus;
@@ -35,6 +38,8 @@ export interface ModelTemplate {
   quantization?: string;
   input_price_per_million: number;
   output_price_per_million: number;
+  local_compute_price_per_million?: number;
+  local_compute_cost_per_second?: number;
   pricing_source: string;
   default_pool_hint?: string;
 }
@@ -57,6 +62,9 @@ export interface WorkspaceModel {
   execution_location: ExecutionLocation;
   provider_model_id: string;
   huggingface_repo_id?: string;
+  source_repo_id?: string;
+  model_source?: string;
+  execution_provider?: string;
   base_url?: string;
   license: string;
   gated_status: GatedStatus;
@@ -65,6 +73,8 @@ export interface WorkspaceModel {
   quantization?: string;
   input_price_per_million: number;
   output_price_per_million: number;
+  local_compute_cost_per_second?: number;
+  local_compute_price_per_million?: number;
   pricing_source: string;
   pricing_verified_at?: string;
   enabled: boolean;
@@ -160,6 +170,8 @@ export interface PricingSnapshot {
   output_price_per_million: number | null;
   pricing_source: string;
   is_free_tier?: boolean;
+  local_compute_cost_per_second?: number | null;
+  local_compute_price_per_million?: number | null;
 }
 
 export type TokenProvenance = 'provider_reported' | 'estimated' | 'unavailable';
@@ -380,10 +392,16 @@ export interface BenchmarkModelConfig {
   provider_type: string;
   execution_mode: ExecutionMode;
   provider_model_id: string;
+  model_source?: string;
+  source_repo_id?: string;
+  execution_provider?: string;
+  execution_location?: ExecutionLocation;
   base_url?: string;
   huggingface_repo_id?: string;
   input_price_per_million?: number;
   output_price_per_million?: number;
+  local_compute_cost_per_second?: number;
+  local_compute_price_per_million?: number;
   pricing_source?: string;
   pricing_snapshot?: PricingSnapshot;
   transient_credential?: string;
@@ -424,6 +442,10 @@ export interface ModelScoringSummary {
   display_name: string;
   provider_type?: string | null;
   provider_model_id?: string | null;
+  model_source?: string | null;
+  source_repo_id?: string | null;
+  execution_provider?: string | null;
+  execution_location?: string | null;
   attempted_questions: number;
   successful_generations: number;
   correct_answers: number;
@@ -441,6 +463,8 @@ export interface ModelScoringSummary {
   total_tokens?: number | null;
   token_provenance?: string;
   missing_usage_count?: number;
+  provider_api_cost_usd?: number | null;
+  local_compute_cost_usd?: number | null;
   total_cost_usd?: number | null;
   cost_per_question_usd?: number | null;
   unknown_cost_count?: number;
@@ -496,6 +520,10 @@ export interface BenchmarkResult {
   model_id: string;
   provider_model_id: string;
   model_display_name: string;
+  model_source?: string | null;
+  source_repo_id?: string | null;
+  execution_provider?: string | null;
+  execution_location?: string | null;
   status: 'success' | 'failed' | 'cancelled';
   prompt_text: string;
   reference_answer: string;
@@ -509,6 +537,8 @@ export interface BenchmarkResult {
   ttft_ms?: number | null;
   finish_reason?: string | null;
   pricing_snapshot?: PricingSnapshot | null;
+  provider_api_cost_usd?: number | null;
+  local_compute_cost_usd?: number | null;
   cost_usd?: number | null;
   error_message?: string | null;
   error_category?: string | null;

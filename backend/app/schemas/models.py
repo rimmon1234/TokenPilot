@@ -73,6 +73,11 @@ class ModelTemplate(BaseModel):
     output_price_per_million: float = Field(0.0, ge=0.0)
     pricing_source: str = Field("unknown", description="e.g. official_docs, free_local, estimated")
     default_pool_hint: Optional[str] = Field("Economy", description="Suggested initial routing pool")
+    model_source: Optional[str] = Field(None, description="Model origin e.g. huggingface_hub, ollama_library, custom")
+    source_repo_id: Optional[str] = Field(None, description="Original repository identifier if applicable")
+    execution_provider: Optional[str] = Field(None, description="e.g. ollama, vllm, huggingface_inference_providers, openai")
+    local_compute_cost_per_second: Optional[float] = Field(None, ge=0.0)
+    local_compute_price_per_million: Optional[float] = Field(None, ge=0.0)
 
 
 class WorkspaceModelBase(BaseModel):
@@ -83,6 +88,9 @@ class WorkspaceModelBase(BaseModel):
     execution_location: ExecutionLocation
     provider_model_id: str
     huggingface_repo_id: Optional[str] = None
+    source_repo_id: Optional[str] = None
+    model_source: Optional[str] = None
+    execution_provider: Optional[str] = None
     base_url: Optional[str] = None
     license: str = "unknown"
     gated_status: GatedStatus = GatedStatus.UNKNOWN
@@ -91,6 +99,8 @@ class WorkspaceModelBase(BaseModel):
     quantization: Optional[str] = None
     input_price_per_million: float = Field(0.0, ge=0.0)
     output_price_per_million: float = Field(0.0, ge=0.0)
+    local_compute_cost_per_second: Optional[float] = Field(None, ge=0.0)
+    local_compute_price_per_million: Optional[float] = Field(None, ge=0.0)
     pricing_source: str = "unknown"
     pricing_verified_at: Optional[datetime] = None
     enabled: bool = True
@@ -111,6 +121,9 @@ class WorkspaceModelUpdate(BaseModel):
     execution_mode: Optional[ExecutionMode] = None
     execution_location: Optional[ExecutionLocation] = None
     provider_model_id: Optional[str] = None
+    model_source: Optional[str] = None
+    source_repo_id: Optional[str] = None
+    execution_provider: Optional[str] = None
     base_url: Optional[str] = None
     license: Optional[str] = None
     gated_status: Optional[GatedStatus] = None
@@ -119,6 +132,8 @@ class WorkspaceModelUpdate(BaseModel):
     quantization: Optional[str] = None
     input_price_per_million: Optional[float] = Field(None, ge=0.0)
     output_price_per_million: Optional[float] = Field(None, ge=0.0)
+    local_compute_cost_per_second: Optional[float] = Field(None, ge=0.0)
+    local_compute_price_per_million: Optional[float] = Field(None, ge=0.0)
     pricing_source: Optional[str] = None
     enabled: Optional[bool] = None
     evaluation_status: Optional[EvaluationStatus] = None

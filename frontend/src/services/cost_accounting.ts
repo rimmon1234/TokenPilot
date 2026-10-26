@@ -36,17 +36,40 @@ export function calculateUsageCost(params: {
 
   // Rule 1: Local execution without explicit compute pricing
   if (executionLocation === 'local') {
-    // If user explicitly configured a local compute rate > 0, we can calculate it
-    const hasExplicitLocalRate =
+    const hasComputeRate =
       pricingSnapshot &&
-      pricingSnapshot.input_price_per_million !== null &&
+      typeof pricingSnapshot.local_compute_price_per_million === 'number' &&
+      pricingSnapshot.local_compute_price_per_million >= 0;
+
+    const hasExplicitInputRate =
+      pricingSnapshot &&
+      typeof pricingSnapshot.input_price_per_million === 'number' &&
       pricingSnapshot.input_price_per_million > 0;
 
-    if (!hasExplicitLocalRate) {
+    if (!hasComputeRate && !hasExplicitInputRate) {
       return {
         estimatedCostUsd: null,
         costStatus: 'unknown',
         pricingProvenance: 'unknown',
+      };
+    }
+
+    if (hasComputeRate && pricingSnapshot) {
+      const pTokens = typeof promptTokens === 'number' && promptTokens >= 0 ? promptTokens : 0;
+      const cTokens = typeof completionTokens === 'number' && completionTokens >= 0 ? completionTokens : 0;
+      if (promptTokens === null && completionTokens === null) {
+        return {
+          estimatedCostUsd: null,
+          costStatus: 'unknown',
+          pricingProvenance: 'configured',
+        };
+      }
+      const computeRate = pricingSnapshot.local_compute_price_per_million || 0;
+      const totalCost = Number((((pTokens + cTokens) * computeRate) / 1_000_000).toFixed(8));
+      return {
+        estimatedCostUsd: totalCost,
+        costStatus: 'known',
+        pricingProvenance: 'configured',
       };
     }
   }

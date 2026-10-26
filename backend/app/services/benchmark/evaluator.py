@@ -12,6 +12,7 @@ from app.schemas.evaluation import (
     BenchmarkRunScoringSummary,
 )
 from app.services.dataset.normalizers import extract_gsm8k_final_answer
+from app.services.benchmark.metadata_resolver import resolve_model_metadata
 
 
 def clean_candidate_number(raw: str) -> Optional[str]:
@@ -62,51 +63,78 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
         return None, None
 
     # Priority 1: Canonical GSM8K delimiter '#### <number>'
-    match = re.search(r"####\s*([^\n\r]+)", text)
-    if match:
-        val = clean_candidate_number(match.group(1))
-        if val is not None:
-            return val, "gsm8k_hash"
+    hash_matches = re.findall(r"####\s*([^\n\r]+)", text)
+    if hash_matches:
+        candidates = [clean_candidate_number(m) for m in hash_matches]
+        valid_candidates = [c for c in candidates if c is not None]
+        if valid_candidates:
+            try:
+                first_dec = Decimal(valid_candidates[0])
+                if all(Decimal(c) == first_dec for c in valid_candidates[1:]):
+                    return valid_candidates[0], "gsm8k_hash"
+            except Exception:
+                if len(set(valid_candidates)) == 1:
+                    return valid_candidates[0], "gsm8k_hash"
+            return None, None
 
     # Priority 2: LaTeX boxed representation: '\boxed{<number>}'
-    match = re.search(r"\\boxed\{([^}]+)\}", text)
-    if match:
-        val = clean_candidate_number(match.group(1))
-        if val is not None:
-            return val, "latex_boxed"
+    boxed_matches = re.findall(r"\\boxed\{([^}]+)\}", text)
+    if boxed_matches:
+        candidates = [clean_candidate_number(m) for m in boxed_matches]
+        valid_candidates = [c for c in candidates if c is not None]
+        if valid_candidates:
+            try:
+                first_dec = Decimal(valid_candidates[0])
+                if all(Decimal(c) == first_dec for c in valid_candidates[1:]):
+                    return valid_candidates[0], "latex_boxed"
+            except Exception:
+                if len(set(valid_candidates)) == 1:
+                    return valid_candidates[0], "latex_boxed"
+            return None, None
 
     # Priority 3: Explicit final answer statements
     final_patterns = [
-        r"(?i)(?:the\s+)?final\s+answer\s+(?:is|equals|=|:)\s*:?\s*([^\n\r.]+)",
+        r"(?i)(?:the\s+)?final\s+(?:answer|result|value|total|amount|weight|cost)\s+(?:is|equals|=|:)\s*:?\s*([^\n\r.]+)",
         r"(?i)final\s+answer\s*:\s*([^\n\r.]+)",
     ]
+    cand_finals = []
     for pat in final_patterns:
-        match = re.search(pat, text)
-        if match:
-            val = clean_candidate_number(match.group(1))
+        for m in re.finditer(pat, text):
+            val = clean_candidate_number(m.group(1))
             if val is not None:
-                return val, "final_answer_phrase"
+                cand_finals.append(val)
+    if cand_finals:
+        try:
+            first_dec = Decimal(cand_finals[0])
+            if all(Decimal(c) == first_dec for c in cand_finals[1:]):
+                return cand_finals[0], "final_answer_phrase"
+        except Exception:
+            if len(set(cand_finals)) == 1:
+                return cand_finals[0], "final_answer_phrase"
+        return None, None
 
     # Priority 4: Explicit answer statements at beginning of line or clause
     ans_patterns = [
-        r"(?i)(?:^|\n|\.\s+)(?:so\s*,?\s*the|therefore\s*,?\s*the|thus\s*,?\s*the|hence\s*,?\s*the|in\s+conclusion\s*,?\s*the)?\s*answer\s*(?:is|equals|=|:)\s*:?\s*([^\n\r.]+)",
+        r"(?i)(?:^|\n|[.!?]\s+)(?:[a-zA-Z,]+\s+)*(?:the\s+)?(?:answer|result|total|sum)\s*(?:is|equals|=|:)\s*:?\s*([^\n\r.]+)",
+        r"(?i)(?:^|\n)(?:answer|result|total)\s*:\s*([^\n\r.]+)",
     ]
+    cand_ans = []
     for pat in ans_patterns:
-        match = re.search(pat, text)
-        if match:
-            val = clean_candidate_number(match.group(1))
+        for m in re.finditer(pat, text):
+            val = clean_candidate_number(m.group(1))
             if val is not None:
-                return val, "answer_phrase"
+                cand_ans.append(val)
+    if cand_ans:
+        try:
+            first_dec = Decimal(cand_ans[0])
+            if all(Decimal(c) == first_dec for c in cand_ans[1:]):
+                return cand_ans[0], "answer_phrase"
+        except Exception:
+            if len(set(cand_ans)) == 1:
+                return cand_ans[0], "answer_phrase"
+        return None, None
 
-    # Priority 5: Concluding sentences with explicit conclusion verbs and target amount
-    # Handles natural LLM completions (e.g. Llama 3.2, Qwen):
-    # - "So, Janet makes $18 every day at the farmers' market."
-    # - "It takes 3 bolts in total to make the robe."
-    # - "Josh made a profit of $70,000."
-    # - "Eliza's earnings for this week are $460."
-    # - "Therefore, it takes Carla 120 minutes (or 2 hours) to download the file."
-    # - "So, Toulouse, Charleston, and Seattle have a total of 260 sheep together."
-    # - "John is 215 miles away from home at the end of the 4 hours."
+    # Priority 5: Concluding sentences with explicit conclusion patterns
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     terminal_candidates = []
     if lines:
@@ -115,26 +143,28 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
             terminal_candidates.append(" ".join(lines[-2:]))
 
     concluding_patterns = [
-        # Topic noun + verb + amount (e.g. Eliza's earnings for this week are $460, Josh made a profit of $70,000)
-        r"(?i)(?:earnings|profit|total(?:\s+cost|\s+distance|\s+amount|\s+number|\s+time)?|cost|price|distance|amount|remainder)\s*[^.\n]*?\b(?:is|are|was|were|=|equals|came to|of)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # Concluding verb with amount: "made a profit of $70,000", "Janet makes $18", "needs to pay $64"
-        r"(?i)\b(?:needs?\s+to\s+pay|spent|spends|paid|cost|costs)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        r"(?i)\b(?:makes?|made|earns?|earned|received?|gets?|got|sells?|sold|leaves?|left)\s+(?:a\s+profit\s+of\s+|an\s+earnings?\s+of\s+|a\s+total\s+of\s+|only\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "takes Carla 120 minutes", "takes 3 bolts in total"
+        # 1. Recommendation / modal verb + action verb + amount: 'Julie should read 42 pages', 'needs to give her chickens 20 cups', 'needs to pay $64'
+        r"(?i)\b(?:should|needs?\s+to|must|will|would|can|has\s+to|had\s+to)\s+(?:[a-zA-Z]+\s+){1,4}(?:a\s+total\s+of\s+|about\s+|only\s+|an\s+additional\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 2. Time taken: 'takes Carla 120 minutes', 'takes 3 bolts in total'
         r"(?i)\b(?:takes?|took)(?:\s+[a-zA-Z]+)?\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "needs to give her chickens 20 cups"
-        r"(?i)\b(?:needs?\s+to\s+(?:give|feed|buy|use|have|pay|add|subtract))(?:\s+[^.\d\n]{1,30})?\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "have/has a total of 260 sheep"
-        r"(?i)\b(?:have|has|had)\s+(?:a\s+total\s+of|in\s+total)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "runs a total of 540 meters"
-        r"(?i)\b(?:runs?|ran|walks?|walked|drives?|drove)\s+(?:a\s+total\s+of\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
-        # "[Subject] is/are [amount] [units] away/left/remaining/in total"
+        # 3. Topic noun + verb + amount: 'final weight ... is 16 pounds', 'the total is 42 pages', 'profit of $70,000'
+        r"(?i)\b(?:the\s+)?(?:final\s+)?(?:weight|cost|price|distance|amount|remainder|total(?:\s+cost|\s+distance|\s+amount|\s+number|\s+time)?|number|count|earnings?|profit|value|time|length|height|width|sum)\s*[^.\n]*?\b(?:is|are|was|were|=|equals|came\s+to|of)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 4. Cost and spending verbs: 'Jasper spends $45...', 'needs to pay $64', 'costs $18'
+        r"(?i)\b(?:needs?\s+to\s+pay|spends?|spent|paid|pays?|cost|costs?)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 5. Existence: 'there were 121 people on the ship'
+        r"(?i)\b(?:there\s+(?:is|are|was|were|will\s+be))\s+(?:a\s+total\s+of\s+|about\s+|only\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 6. Passive conclusion: '1080 beetles are eaten each day'
+        r"(?i)\b(?:so|therefore|thus|hence|in total|in all|altogether|this means(?:\s+that)?)\s*,?\s*([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)\s+(?:[a-zA-Z%]+\s+)*(?:are|were|was|is|will\s+be)\s+(?:eaten|read|written|bought|sold|consumed|needed|required|used|left|remaining|produced|spent|paid|collected)",
+        # 7. Discourse marker + action verb: 'So, Julie reads 42...', 'Therefore, James writes 624 pages...'
+        r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|this means(?:\s+that)?|as a result)\s*,?\s*[^.\n]*?\b(?:reads?|wrote|writes?|ate|eats?|bought|buys?|paid|pays?|spent|spends?|made|makes?|earned|earns?|had|has|have|got|gets?|received?|receives?|took|takes?|used|uses?|gave|gives?|ran|runs?|walked|walks?|drove|drives?|shoveled?|shovels?|planted?|plants?|consumed?|consumes?|collected?|collects?|cooked?|cooks?|baked?|bakes?|sold|sells?|leaves?|left|cost|costs?)\s+(?:a\s+total\s+of\s+|about\s+|only\s+|an\s+additional\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)",
+        # 8. Action verb + concluding adverbial phrase at end of sentence: 'Albert eats 48 slices of pizza that day.', 'Bella bought 38 stamps in all.'
+        r"(?i)\b(?:reads?|wrote|writes?|ate|eats?|bought|buys?|paid|pays?|spent|spends?|made|makes?|earned|earns?|got|gets?|received?|receives?|took|takes?|used|uses?|gave|gives?|ran|runs?|walked|walks?|drove|drives?|shoveled?|shovels?|planted?|plants?|consumed?|consumes?|collected?|collects?|cooked?|cooks?|baked?|bakes?|sold|sells?|cost|costs?)\s+(?:a\s+total\s+of\s+|about\s+|only\s+|an\s+additional\s+)?([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)\s*(?:[a-zA-Z%]+\s+)*(?:in\s+all|in\s+total|altogether|that\s+day|each\s+day|per\s+day|a\s+day|a\s+week|per\s+week|a\s+year|per\s+year|in\s+a\s+year|tomorrow|yesterday)\b",
+        # 9. '[Subject] is/are [amount] [units] away/left/remaining/in total'
         r"(?i)\b(?:is|are|was|were)\s+([-\$€£¥]?\s*[\d,]+(?:\.\d+)?)\s*(?:miles?|meters?|km|feet|inches|minutes?|hours?|days?|weeks?|years?|bolts?|cups?|sheep|eggs?|dollars?|cents?|glasses?|away|left|remaining|in total)",
-        # Broad conclusion fallback
-        r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|in conclusion)\s*,?\s*[^.\n]*?\b(?:is|are|equals|=|makes|takes|has|have|gets|needs|earns|sells|leaves|pays|cost|costs|runs|walks|eats|spent|spends|paid)\s+(?:a total of\s+|only\s+)?(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\b",
+        # 10. Broad discourse fallback
+        r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|in conclusion|this means(?:\s+that)?)\s*,?\s*[^.\n]*?\b(?:is|are|was|were|equals|=|makes?|made|takes?|took|has|have|had|gets?|got|needs?|needed|earns?|earned|sells?|sold|leaves?|left|pays?|paid|cost|costs?|runs?|ran|walks?|walked|eats?|ate|spent|spends?)\s+(?:a\s+total\s+of\s+|only\s+)?(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\b",
     ]
 
-    # Check terminal lines first (prevents intermediate calculations from matching)
     for sample in terminal_candidates:
         for pat in concluding_patterns:
             match = re.search(pat, sample)
@@ -145,7 +175,7 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
 
     # Search backwards from the end across the full text ONLY for sentences with explicit discourse markers
     # (e.g. "So, ...", "Therefore, ..."). Never match plain premise sentences like "She had 10 apples."
-    discourse_pattern = r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|in conclusion)\s*,?\s*[^.\n]*?\b(?:is|are|equals|=|makes|takes|has|have|gets|needs|earns|sells|leaves|pays|cost|costs|runs|walks|eats|spent|spends|paid)\s+(?:a total of\s+|only\s+)?(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\b"
+    discourse_pattern = r"(?i)(?:so|therefore|thus|hence|in total|in all|altogether|in conclusion|this means(?:\s+that)?)\s*,?\s*[^.\n]*?\b(?:is|are|was|were|equals|=|makes?|made|takes?|took|has|have|had|gets?|got|needs?|needed|earns?|earned|sells?|sold|leaves?|left|pays?|paid|cost|costs?|runs?|ran|walks?|walked|eats?|ate|spent|spends?|reads?|wrote|writes?|bought|buys?|eats?|ate)\s+(?:a\s+total\s+of\s+|only\s+)?(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\b"
     matches = list(re.finditer(discourse_pattern, text))
     if matches:
         last_match = matches[-1]
@@ -153,8 +183,8 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
         if val is not None:
             return val, "concluding_statement"
 
-    # Priority 6: Concluding equation at the very end of response: "= 18" or "= $18"
-    match = re.search(r"=\s*(\$?\s*[-+]?[\d,]+(?:\.\d+)?)\.?\s*$", text)
+    # Priority 6: Concluding equation at the very end of response: "= 18" or "= $18" or "= 42 pages."
+    match = re.search(r"=\s*(\$?\s*[-+]?[\d,]+(?:\.\d+)?)(?:\s+[a-zA-Z%]+)?\.?\s*$", text)
     if match:
         val = clean_candidate_number(match.group(1))
         if val is not None:
@@ -164,8 +194,6 @@ def extract_gsm8k_model_answer(response_text: str) -> Tuple[Optional[str], Optio
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if lines:
         last_line = lines[-1]
-        # Check if the last line contains exactly one number and nothing else besides unit/label
-        # e.g. "42", "$42", "42.", "3 bolts", "Answer: 42"
         simple_match = re.match(r"^[\$€£¥\s]*[-+]?[\d,]+(?:\.\d+)?(?:\s+[a-zA-Z%]+)?\.?$", last_line)
         if simple_match:
             val = clean_candidate_number(last_line)
@@ -200,12 +228,26 @@ def compare_gsm8k_answers(candidate_str: Optional[str], reference_str: Optional[
         return clean_cand.lower() == clean_ref.lower()
 
 
-def evaluate_gsm8k_result(result: BenchmarkResult) -> BenchmarkResult:
+def evaluate_gsm8k_result(
+    result: BenchmarkResult, model_config: Optional[Any] = None
+) -> BenchmarkResult:
     """
     Evaluate an individual GSM8K benchmark result deterministically.
     Preserves all inference telemetry, timestamps, and cost data.
     Updates evaluation_status, extracted_answer, score, metric_name, and evaluation_details.
     """
+    # Disambiguate model metadata if missing on result
+    if not result.model_source or not result.execution_provider or not result.execution_location:
+        meta = resolve_model_metadata(model_config or result)
+        if not result.model_source:
+            result.model_source = meta["model_source"]
+        if not result.source_repo_id:
+            result.source_repo_id = meta["source_repo_id"]
+        if not result.execution_provider:
+            result.execution_provider = meta["execution_provider"]
+        if not result.execution_location:
+            result.execution_location = meta["execution_location"]
+
     # 1. Non-successful inference status (timeout, 401, 429, cancelled, error) -> FAILED
     if result.status != "success":
         result.evaluation_status = EvaluationOutcome.FAILED
@@ -326,9 +368,13 @@ def calculate_benchmark_scores(
     Score all results for a GSM8K benchmark run, calculate per-model and aggregate metrics,
     and update run.results_summary without making external API calls.
     """
+    model_config_map: Dict[str, Any] = {
+        cfg.model_id: cfg for cfg in (run.model_configs or [])
+    }
     evaluated_results: List[BenchmarkResult] = []
     for res in results:
-        evaluated_res = evaluate_gsm8k_result(res)
+        cfg = model_config_map.get(res.model_id)
+        evaluated_res = evaluate_gsm8k_result(res, model_config=cfg)
         evaluated_results.append(evaluated_res)
 
     # Group results by model_id
@@ -406,35 +452,88 @@ def calculate_benchmark_scores(
         else:
             token_provenance = "unavailable"
 
-        # Cost accounting
+        # Model configs lookup & metadata resolution
+        model_cfg = next((c for c in run.model_configs if c.model_id == model_id), None)
+        first_res = model_res_list[0] if model_res_list else None
+        meta = resolve_model_metadata(model_cfg or first_res or {})
+
+        model_source = (model_cfg.model_source if model_cfg and model_cfg.model_source else None) or (first_res.model_source if first_res else None) or meta["model_source"]
+        source_repo_id = (model_cfg.source_repo_id if model_cfg and model_cfg.source_repo_id else None) or (first_res.source_repo_id if first_res else None) or meta["source_repo_id"]
+        execution_provider = (model_cfg.execution_provider if model_cfg and model_cfg.execution_provider else None) or (first_res.execution_provider if first_res else None) or meta["execution_provider"]
+        execution_location = (model_cfg.execution_location if model_cfg and model_cfg.execution_location else None) or (first_res.execution_location if first_res else None) or meta["execution_location"]
+        provider_type = execution_provider or (model_cfg.provider_type if model_cfg else None)
+        provider_model_id = (
+            (model_cfg.provider_model_id if model_cfg else None)
+            or (first_res.provider_model_id if first_res else None)
+            or meta["runtime_model_id"]
+        )
+        pricing_source = model_cfg.pricing_source if model_cfg else None
+
+        # Truthful multi-dimensional cost accounting
+        # Distinguish: local API invoice (known $0.00) vs local compute cost vs total cost
+        has_configured_local_compute = (
+            model_cfg is not None
+            and (
+                (model_cfg.local_compute_cost_per_second is not None and model_cfg.local_compute_cost_per_second >= 0)
+                or (model_cfg.local_compute_price_per_million is not None and model_cfg.local_compute_price_per_million >= 0)
+            )
+        )
+
         costs = [
             r.cost_usd for r in model_res_list if r.status == "success" and r.cost_usd is not None
         ]
-        unknown_cost_count = sum(
-            1 for r in model_res_list if r.status == "success" and r.cost_usd is None
-        )
 
-        total_cost_usd = None
-        cost_per_q_usd = None
-        if unknown_cost_count == 0 and len(costs) == successful and successful > 0:
-            total_cost_usd = round(sum(costs), 6)
-            cost_per_q_usd = round(total_cost_usd / successful, 6)
-
-        # Model configs lookup
-        model_cfg = next((c for c in run.model_configs if c.model_id == model_id), None)
-        provider_type = model_cfg.provider_type if model_cfg else None
-        provider_model_id = (
-            model_cfg.provider_model_id
-            if model_cfg
-            else (model_res_list[0].provider_model_id if model_res_list else None)
-        )
-        pricing_source = model_cfg.pricing_source if model_cfg else None
+        if execution_location == "local":
+            provider_api_cost_usd = 0.0 if successful > 0 else None
+            if has_configured_local_compute:
+                comp_costs = [
+                    r.local_compute_cost_usd for r in model_res_list if r.status == "success" and r.local_compute_cost_usd is not None
+                ]
+                if len(comp_costs) == successful and successful > 0:
+                    local_compute_cost_usd = round(sum(comp_costs), 6)
+                    total_cost_usd = round(local_compute_cost_usd, 6)
+                    cost_per_q_usd = round(total_cost_usd / successful, 6)
+                    unknown_cost_count = 0
+                else:
+                    local_compute_cost_usd = None
+                    total_cost_usd = None
+                    cost_per_q_usd = None
+                    unknown_cost_count = successful
+            else:
+                # No local compute hardware rate configured -> compute cost and total cost are strictly unknown
+                local_compute_cost_usd = None
+                total_cost_usd = None
+                cost_per_q_usd = None
+                unknown_cost_count = successful
+        elif execution_location == "remote":
+            local_compute_cost_usd = 0.0 if successful > 0 else None
+            unknown_cost_count = sum(
+                1 for r in model_res_list if r.status == "success" and r.cost_usd is None
+            )
+            if unknown_cost_count == 0 and len(costs) == successful and successful > 0:
+                total_cost_usd = round(sum(costs), 6)
+                cost_per_q_usd = round(total_cost_usd / successful, 6)
+                provider_api_cost_usd = total_cost_usd
+            else:
+                total_cost_usd = None
+                cost_per_q_usd = None
+                provider_api_cost_usd = None
+        else:
+            provider_api_cost_usd = None
+            local_compute_cost_usd = None
+            total_cost_usd = None
+            cost_per_q_usd = None
+            unknown_cost_count = successful
 
         model_metrics[model_id] = ModelScoringSummary(
             model_id=model_id,
             display_name=display_name,
             provider_type=provider_type,
             provider_model_id=provider_model_id,
+            model_source=model_source,
+            source_repo_id=source_repo_id,
+            execution_provider=execution_provider,
+            execution_location=execution_location,
             attempted_questions=attempted,
             successful_generations=successful,
             correct_answers=correct,
@@ -452,6 +551,8 @@ def calculate_benchmark_scores(
             total_tokens=tot_tokens,
             token_provenance=token_provenance,
             missing_usage_count=missing_usage,
+            provider_api_cost_usd=provider_api_cost_usd,
+            local_compute_cost_usd=local_compute_cost_usd,
             total_cost_usd=total_cost_usd,
             cost_per_question_usd=cost_per_q_usd,
             unknown_cost_count=unknown_cost_count,

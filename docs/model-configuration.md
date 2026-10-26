@@ -55,15 +55,26 @@ TokenPilot models specify one of five runtime execution modes:
 
 TokenPilot mandates absolute integrity in model metadata:
 
-1. **Licenses**: Display the actual license tag (`apache-2.0`, `mit`, `llama3.1`, `other`, etc.) if verified. If missing, flag as `unknown`. Do not classify unknown licenses as permissive.
-2. **Gated Status**: Identify if the model requires accepting an agreement or license on Hugging Face before access (`gated: auto`, `manual`, or `none`).
-3. **Capabilities**: `supports_tools`, `supports_vision`, `supports_streaming`, `supports_json_mode`. Each flag must be verified or defaulted to `false` until tested.
-4. **Context Window**: Explicitly verified maximum context token length.
-5. **Pricing**:
-   - `input_price_per_million`: Cost in USD per 1M prompt tokens.
-   - `output_price_per_million`: Cost in USD per 1M completion tokens.
-   - `pricing_source`: Origin of pricing (e.g., `official_docs`, `user_override`, `free_local_tier`).
-   - `pricing_verified_at`: ISO timestamp when pricing was confirmed.
+1. **Independent Metadata Dimensions**:
+   - **Model Source (`model_source`)**: Where the weights or repository origin reside (`huggingface_hub`, `ollama_library`, `google_ai_studio`, `custom`).
+   - **Source Repository ID (`source_repo_id`)**: Original repository identifier if applicable (e.g. `Qwen/Qwen2.5-Coder-7B-Instruct`).
+   - **Execution Provider (`execution_provider`)**: The actual inference server engine executing requests (e.g. `ollama`, `vllm`, `huggingface_inference_providers`, `openai`, `gemini`).
+   - **Execution Location (`execution_location`)**: Boundary locality (`local` machine or `remote` cloud).
+   - **Runtime Model ID (`provider_model_id`)**: The model identifier expected by the runtime engine (e.g. `qwen2.5-coder:7b`).
+2. **Licenses**: Display the actual license tag (`apache-2.0`, `mit`, `llama3.1`, `other`, etc.) if verified. If missing, flag as `unknown`. Do not classify unknown licenses as permissive.
+3. **Gated Status**: Identify if the model requires accepting an agreement or license on Hugging Face before access (`gated: auto`, `manual`, or `none`).
+4. **Capabilities**: `supports_tools`, `supports_vision`, `supports_streaming`, `supports_json_mode`. Each flag must be verified or defaulted to `false` until tested.
+5. **Context Window**: Explicitly verified maximum context token length.
+6. **Multi-Dimensional Pricing & Cost Basis**:
+   - **Provider API Invoice Pricing**:
+     - `input_price_per_million`: Billable cost in USD per 1M prompt tokens (0.0 for local hardware).
+     - `output_price_per_million`: Billable cost in USD per 1M completion tokens (0.0 for local hardware).
+     - `pricing_source`: Origin of pricing (e.g., `official_docs`, `user_override`, `free_local_hardware`).
+     - `pricing_verified_at`: ISO timestamp when pricing was confirmed.
+   - **Local Hardware Compute Cost (Optional)**:
+     - `local_compute_price_per_million`: Configured amortized hardware compute price per 1M tokens.
+     - `local_compute_cost_per_second`: Configured hardware compute rate in USD per second of inference latency.
+     - **Truthful Rule**: If hardware compute is unconfigured, total inference cost remains strictly `unknown` (`null`) rather than coerced to $0.00. Unpriced models are safely analyzed on the Unpriced Tier shelf and excluded from the priced Pareto frontier.
 
 ---
 

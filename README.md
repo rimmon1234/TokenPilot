@@ -100,12 +100,15 @@ npm run build
   - [x] **M3.1 — Model Connection Testing & Diagnostics**
   - [x] **M3.2 — Chat Completion Gateway & Stream Telemetry**
   - [x] **M3.3 — Usage Persistence, History & Cost Auditing**
-- [ ] **M4 — Evaluation Harness & Benchmark Datasets**
+- [x] **M4 — Evaluation Harness & Benchmark Datasets**
   - [x] **M4.1 — Benchmark Dataset Registry & Import Pipeline**
   - [x] **M4.2.1 — Multi-Model Benchmark Execution Engine**
   - [x] **M4.2.2 — GSM8K Evaluation & Scoring**
   - [x] **M4.2.3 — Model Comparison UI & Benchmark Reports**
+  - [x] **Benchmark Metadata & Cost Integrity Checkpoint** (Source vs Runtime Disambiguation & Unpriced Local Cost Accounting)
 - [ ] **M5 — Supervised ML Router Training**
+  - [x] **M5 Data Preparation & Protocol** (GSM8K `train` split, Group-K prompt partition, zero leakage, collection schema)
+  - [ ] **M5 Model Training & Calibration** (CatBoost / scikit-learn Router Classifier)
 - [ ] **M6 — Automatic Routing & Cost Analytics**
 - [ ] **M7 — Auth, Sessions & Encrypted Cloud Sync**
 - [ ] **M8 — Production Hardening & Deployment**

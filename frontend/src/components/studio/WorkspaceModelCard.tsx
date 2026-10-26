@@ -15,6 +15,7 @@ import {
 import { WorkspaceModel, RoutingPool } from '../../types';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { resolveModelMetadata } from '../../services/metadata_resolver';
 
 interface WorkspaceModelCardProps {
   model: WorkspaceModel;
@@ -34,6 +35,7 @@ export const WorkspaceModelCard: React.FC<WorkspaceModelCardProps> = ({
   onTestConnection,
 }) => {
   const assignedPools = allPools.filter((p) => model.assigned_pool_ids.includes(p.id));
+  const resolved = resolveModelMetadata(model);
 
   const formatPrice = (price: number) => {
     if (price === 0) return 'Free';
@@ -82,9 +84,15 @@ export const WorkspaceModelCard: React.FC<WorkspaceModelCardProps> = ({
               </a>
             )}
           </div>
-          <p className="text-xs font-mono text-slate-400 truncate">
-            {model.provider_model_id}
-          </p>
+          <div className="flex items-center gap-2 text-xs font-mono text-slate-400 truncate">
+            <span className="text-slate-400">{resolved.source_display}</span>
+            <span className="text-slate-600">•</span>
+            <span className="text-brand-300">{resolved.runtime_display}</span>
+            <span className="text-slate-600">•</span>
+            <span className="text-slate-300 bg-dark-800/80 px-1.5 py-0.5 rounded border border-dark-700/50">
+              {resolved.runtime_model_id}
+            </span>
+          </div>
         </div>
 
         {/* Enable / Disable toggle */}
@@ -102,10 +110,10 @@ export const WorkspaceModelCard: React.FC<WorkspaceModelCardProps> = ({
       {/* Badges: Location, Runtime Mode, License, Gated */}
       <div className="flex items-center gap-1.5 flex-wrap mb-4">
         <Badge
-          variant={model.execution_location === 'local' ? 'info' : 'brand'}
-          icon={model.execution_location === 'local' ? <Cpu className="w-3 h-3" /> : <Server className="w-3 h-3" />}
+          variant={resolved.execution_location === 'local' ? 'info' : 'brand'}
+          icon={resolved.execution_location === 'local' ? <Cpu className="w-3 h-3" /> : <Server className="w-3 h-3" />}
         >
-          {model.execution_location.toUpperCase()}
+          {resolved.execution_location.toUpperCase()} ({resolved.runtime_display})
         </Badge>
 
         <Badge variant="neutral">
@@ -165,13 +173,29 @@ export const WorkspaceModelCard: React.FC<WorkspaceModelCardProps> = ({
       <div className="p-2.5 rounded-lg bg-dark-850/80 border border-dark-800 text-xs mb-4 flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-slate-300">
           <Coins className="w-3.5 h-3.5 text-brand-400" />
-          <span>Pricing / 1M tokens:</span>
+          <span>Pricing / Cost Basis:</span>
         </div>
         <div className="flex items-center gap-3 font-mono text-slate-200">
-          <span>In: <strong className="text-emerald-400">{formatPrice(model.input_price_per_million)}</strong></span>
-          <span className="text-slate-600">|</span>
-          <span>Out: <strong className="text-emerald-400">{formatPrice(model.output_price_per_million)}</strong></span>
-          <span className="text-[10px] text-slate-400">({model.pricing_source})</span>
+          {resolved.execution_location === 'local' ? (
+            <>
+              <span>API: <strong className="text-emerald-400">$0.00</strong></span>
+              <span className="text-slate-600">|</span>
+              {model.local_compute_price_per_million != null ? (
+                <span>Compute: <strong className="text-cyan-400">${model.local_compute_price_per_million.toFixed(2)}/1M</strong></span>
+              ) : model.local_compute_cost_per_second != null ? (
+                <span>Compute: <strong className="text-cyan-400">${model.local_compute_cost_per_second.toFixed(4)}/s</strong></span>
+              ) : (
+                <span className="text-amber-400/90 text-[11px] font-sans">Compute: Unconfigured</span>
+              )}
+            </>
+          ) : (
+            <>
+              <span>In: <strong className="text-emerald-400">{formatPrice(model.input_price_per_million)}</strong></span>
+              <span className="text-slate-600">|</span>
+              <span>Out: <strong className="text-emerald-400">{formatPrice(model.output_price_per_million)}</strong></span>
+              <span className="text-[10px] text-slate-400">({model.pricing_source})</span>
+            </>
+          )}
         </div>
       </div>
 

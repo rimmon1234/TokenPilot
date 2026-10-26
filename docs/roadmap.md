@@ -103,6 +103,12 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
   - Decoupled billable Provider API Cost ($0.00 for local Ollama) from Local Compute Cost ($/s or $/1M tokens) and Estimated Total Cost.
   - Prevented unpriced local models from erroneously dominating the priced Pareto frontier.
   - Legacy run backwards compatibility and test coverage.
+- **UX — Custom Benchmark Names and Timestamp-Based Run Selection** (Completed):
+  - User-configurable benchmark run names (`display_name`) with auto-generated concise fallback (`<Short Dataset Alias> · <Timestamp>`).
+  - Whitespace trimming, 80-character ceiling, and empty string rejection validation.
+  - `PATCH /api/benchmarks/runs/{run_id}` endpoint and UI action to rename completed or historical runs without re-inference.
+  - Compact `<Name> · <Timestamp>` label formatting across selection dropdowns with CSS name truncation, visible timestamps, and accessible tooltips.
+  - Full backwards compatibility with legacy runs and inclusion in JSON and RFC 4180 CSV exports.
 - **M5 Development-Data Preparation & Protocol** (Groundwork Complete):
   - Strict split discipline: GSM8K upstream `train` split exclusively for `dev_train`, preserving `test` split as a held-out benchmark.
   - `M5PilotRecord` canonical schema and `m5_collector` builder.

@@ -127,6 +127,12 @@ Milestone M4 introduces reproducible evaluation harnesses and standardized bench
     - **JSON Export**: Complete run metadata, configuration snapshots, per-model scoring summaries, latency percentiles, and individual evaluation records.
     - **CSV Export**: Clean RFC 4180 compliant CSV format with run metadata comments, Model Performance Summary table, and Detailed Evaluation Records table. Escapes quotes, commas, and line breaks safely.
     - **Secret Exclusion Guarantee**: Excludes API tokens, transient credentials, and workspace secrets. Missing values are represented as explicit `null` / `Unknown` states without synthetic inflation.
+  - **Custom Benchmark Names, Renaming & Selector Labels**:
+    - **Display Name (`display_name`)**: Optional user-defined human-readable label stored in `.run.json` (max 80 chars, whitespace trimmed, empty/whitespace-only strings rejected).
+    - **Default Generation**: When omitted, auto-generates `<Short Dataset Alias> · <Timestamp>` (e.g. `GSM8K · Oct 26, 8:59 PM`).
+    - **Rename API**: `PATCH /api/benchmarks/runs/{run_id}` updates only `display_name` without re-running models or altering result files.
+    - **Selection Dropdowns**: Controls render concise `<Short Benchmark Name> · <Timestamp>` format, truncating long names with an ellipsis while keeping the timestamp fixed and visible. Options use the immutable `run_id` as their value and sort newest first.
+    - **Legacy Compatibility**: Older run files without `display_name` seamlessly fallback to the concise dataset alias and timestamp without manual migration.
 
 ---
 

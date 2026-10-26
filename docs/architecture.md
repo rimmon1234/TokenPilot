@@ -310,6 +310,7 @@ flowchart TD
         CreateRun["POST /api/benchmarks/runs"]
         GetRuns["GET /api/benchmarks/runs"]
         GetRunDetail["GET /api/benchmarks/runs/{id}"]
+        UpdateRun["PATCH /api/benchmarks/runs/{id}"]
         GetResults["GET /api/benchmarks/runs/{id}/results"]
         CancelRun["POST /api/benchmarks/runs/{id}/cancel"]
     end

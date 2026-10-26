@@ -106,6 +106,7 @@ npm run build
   - [x] **M4.2.2 — GSM8K Evaluation & Scoring**
   - [x] **M4.2.3 — Model Comparison UI & Benchmark Reports**
   - [x] **Benchmark Metadata & Cost Integrity Checkpoint** (Source vs Runtime Disambiguation & Unpriced Local Cost Accounting)
+  - [x] **UX — Custom Benchmark Names and Timestamp-Based Run Selection** (Editable Display Names & Compact `<Name> · <Timestamp>` Selectors)
 - [ ] **M5 — Supervised ML Router Training**
   - [x] **M5 Data Preparation & Protocol** (GSM8K `train` split, Group-K prompt partition, zero leakage, collection schema)
   - [ ] **M5 Model Training & Calibration** (CatBoost / scikit-learn Router Classifier)

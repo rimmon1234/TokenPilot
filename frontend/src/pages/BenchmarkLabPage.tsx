@@ -32,6 +32,7 @@ import {
   Target,
   Zap,
   Sparkles,
+  Edit2,
 } from 'lucide-react';
 import {
   DatasetTemplate,
@@ -60,9 +61,59 @@ import {
   scoreBenchmarkRun,
   downloadBenchmarkReport,
   deleteBenchmarkRun,
+  updateBenchmarkRun,
 } from '../services/benchmark_service';
 import { workspaceRepo } from '../storage/indexeddb_repository';
 import { resolveModelMetadata } from '../services/metadata_resolver';
+
+export function formatBenchmarkTimestamp(timestampStr?: string | null): string {
+  if (!timestampStr) return 'Unknown date';
+  try {
+    const date = new Date(timestampStr);
+    if (isNaN(date.getTime())) return 'Unknown date';
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return 'Unknown date';
+  }
+}
+
+export function getBenchmarkRunDisplayTitle(run: BenchmarkRun): string {
+  if (run.display_name && run.display_name.trim()) {
+    return run.display_name.trim();
+  }
+  const shortDataset = run.dataset_id?.toLowerCase() === 'gsm8k'
+    ? 'GSM8K'
+    : (run.dataset_name || 'Benchmark Run');
+  const timeStr = formatBenchmarkTimestamp(run.started_at);
+  return `${shortDataset} · ${timeStr}`;
+}
+
+export function getBenchmarkRunSelectOption(
+  run: BenchmarkRun,
+  maxNameChars: number = 36
+): { label: string; fullTitle: string } {
+  const timeStr = formatBenchmarkTimestamp(run.started_at);
+  let rawName = run.display_name?.trim();
+  if (!rawName) {
+    rawName = run.dataset_id?.toLowerCase() === 'gsm8k'
+      ? 'GSM8K'
+      : (run.dataset_name || 'Benchmark Run');
+  }
+
+  const fullTitle = `${rawName} · ${timeStr} (${run.id})`;
+  const truncatedName = rawName.length > maxNameChars
+    ? `${rawName.slice(0, maxNameChars - 1)}…`
+    : rawName;
+
+  const label = `${truncatedName} · ${timeStr}`;
+  return { label, fullTitle };
+}
 
 export const BenchmarkLabPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'templates' | 'imported' | 'runs' | 'comparison'>('templates');
@@ -105,6 +156,13 @@ export const BenchmarkLabPage: React.FC = () => {
   const [runTransientHfToken, setRunTransientHfToken] = useState<string>('');
   const [runStarting, setRunStarting] = useState<boolean>(false);
   const [runModalError, setRunModalError] = useState<string | null>(null);
+  const [runBenchmarkName, setRunBenchmarkName] = useState<string>('');
+
+  // Rename Run Modal State
+  const [renameModalRun, setRenameModalRun] = useState<BenchmarkRun | null>(null);
+  const [renameInput, setRenameInput] = useState<string>('');
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<boolean>(false);
 
   // Active Running Progress & Polling
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -408,6 +466,7 @@ export const BenchmarkLabPage: React.FC = () => {
   const handleOpenRunModal = (datasetManifestId?: string) => {
     const defaultDs = datasetManifestId || (importedDatasets.find((d) => d.task_type === 'math_reasoning')?.manifest_id || '');
     setRunModalDatasetId(defaultDs);
+    setRunBenchmarkName('');
 
     // Preselect enabled models by default
     const enabled = workspaceModels.filter((m) => m.enabled).map((m) => m.id);
@@ -429,6 +488,14 @@ export const BenchmarkLabPage: React.FC = () => {
     }
     if (selectedModelIds.length === 0) {
       setRunModalError('Please select at least one enabled model to evaluate.');
+      return;
+    }
+    if (runBenchmarkName.length > 0 && !runBenchmarkName.trim()) {
+      setRunModalError('Benchmark name cannot be empty or whitespace-only.');
+      return;
+    }
+    if (runBenchmarkName.trim().length > 80) {
+      setRunModalError('Benchmark name cannot exceed 80 characters.');
       return;
     }
 
@@ -458,6 +525,7 @@ export const BenchmarkLabPage: React.FC = () => {
       }));
 
       const newRun = await createBenchmarkRun({
+        display_name: runBenchmarkName.trim() || undefined,
         dataset_manifest_id: runModalDatasetId,
         models: modelConfigs,
         subset_size: runSubsetSize,
@@ -474,11 +542,53 @@ export const BenchmarkLabPage: React.FC = () => {
       setActiveRun(newRun);
       setRunModalOpen(false);
       setActiveTab('runs');
-      setSuccessBanner(`Launched benchmark run '${newRun.id}'! Monitoring progress in real-time.`);
+      setSuccessBanner(`Launched benchmark run '${newRun.display_name || newRun.id}'! Monitoring progress in real-time.`);
     } catch (err: any) {
       setRunModalError(err.message || 'Failed to start benchmark run.');
     } finally {
       setRunStarting(false);
+    }
+  };
+
+  const handleOpenRename = (run: BenchmarkRun) => {
+    setRenameModalRun(run);
+    setRenameInput(run.display_name || '');
+    setRenameError(null);
+  };
+
+  const handleSaveRename = async () => {
+    if (!renameModalRun) return;
+    const trimmed = renameInput.trim();
+    if (!trimmed) {
+      setRenameError('Benchmark name cannot be empty or whitespace-only.');
+      return;
+    }
+    if (trimmed.length > 80) {
+      setRenameError('Benchmark name cannot exceed 80 characters.');
+      return;
+    }
+
+    setRenaming(true);
+    setRenameError(null);
+    try {
+      const updated = await updateBenchmarkRun(renameModalRun.id, {
+        display_name: trimmed,
+      });
+      setBenchmarkRuns((prev) =>
+        prev.map((r) => (r.id === updated.id ? updated : r))
+      );
+      if (activeRun?.id === updated.id) {
+        setActiveRun(updated);
+      }
+      if (resultsModalRun?.id === updated.id) {
+        setResultsModalRun(updated);
+      }
+      setRenameModalRun(null);
+      setSuccessBanner(`Renamed benchmark run to '${updated.display_name}'.`);
+    } catch (err: any) {
+      setRenameError(err.message || 'Failed to rename benchmark run.');
+    } finally {
+      setRenaming(false);
     }
   };
 
@@ -842,36 +952,59 @@ export const BenchmarkLabPage: React.FC = () => {
                     key={run.id}
                     className="dev-card p-4 border border-dark-800 hover:border-dark-750 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4"
                   >
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <span className="font-mono text-xs font-semibold text-brand-300">{run.id}</span>
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-dark-850 text-slate-300 border border-dark-750">
-                          {run.dataset_name} ({run.source_split})
-                        </span>
+                    <div className="space-y-2 min-w-0 flex-1">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h3
+                            className="text-sm font-semibold text-slate-100 truncate max-w-md md:max-w-xl"
+                            title={run.display_name || getBenchmarkRunDisplayTitle(run)}
+                          >
+                            {run.display_name || getBenchmarkRunDisplayTitle(run)}
+                          </h3>
+                          <button
+                            onClick={() => handleOpenRename(run)}
+                            className="p-1 text-slate-400 hover:text-brand-300 rounded hover:bg-dark-800 transition-colors shrink-0"
+                            title="Rename benchmark run"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
 
-                        {isRunning && (
-                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex items-center gap-1">
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                            Running
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className="font-mono text-[11px] font-semibold text-brand-300/90 bg-brand-500/10 px-1.5 py-0.5 rounded border border-brand-500/20"
+                            title={`Run ID: ${run.id}`}
+                          >
+                            {run.id}
                           </span>
-                        )}
-                        {isSuccess && (
-                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3" />
-                            Completed
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-dark-850 text-slate-300 border border-dark-750">
+                            {run.dataset_name} ({run.source_split})
                           </span>
-                        )}
-                        {isPartial && (
-                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3" />
-                            Partial ({run.progress.failed_items} errors)
-                          </span>
-                        )}
-                        {isCancelled && (
-                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
-                            Cancelled
-                          </span>
-                        )}
+
+                          {isRunning && (
+                            <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex items-center gap-1">
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                              Running
+                            </span>
+                          )}
+                          {isSuccess && (
+                            <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" />
+                              Completed
+                            </span>
+                          )}
+                          {isPartial && (
+                            <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3" />
+                              Partial ({run.progress.failed_items} errors)
+                            </span>
+                          )}
+                          {isCancelled && (
+                            <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
+                              Cancelled
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
@@ -889,7 +1022,7 @@ export const BenchmarkLabPage: React.FC = () => {
                           </strong>
                         </span>
                         <span>•</span>
-                        <span>Started: {new Date(run.started_at).toLocaleTimeString()}</span>
+                        <span>Started: {formatBenchmarkTimestamp(run.started_at)}</span>
                       </div>
 
                       {/* Display scoring metrics if scored */}
@@ -926,6 +1059,14 @@ export const BenchmarkLabPage: React.FC = () => {
                         </button>
                       ) : (
                         <>
+                          <button
+                            onClick={() => handleOpenRename(run)}
+                            className="dev-btn-secondary text-xs px-2.5 py-1.5 flex items-center gap-1.5"
+                            title="Rename this benchmark run"
+                          >
+                            <Edit2 className="w-3 h-3 text-slate-400" />
+                            Rename
+                          </button>
                           {(isSuccess || isPartial) && run.task_type === 'math_reasoning' && (
                             <button
                               onClick={() => handleScoreRun(run.id)}
@@ -979,24 +1120,22 @@ export const BenchmarkLabPage: React.FC = () => {
                 <select
                   value={selectedComparisonRunId || ''}
                   onChange={(e) => setSelectedComparisonRunId(e.target.value)}
-                  className="bg-dark-850 border border-dark-750 text-slate-200 text-xs rounded-lg px-3 py-2 min-w-[280px] md:min-w-[360px] focus:border-brand-500 focus:outline-none"
+                  className="bg-dark-850 border border-dark-750 text-slate-200 text-xs rounded-lg px-3 py-2 min-w-[280px] md:min-w-[360px] max-w-[420px] truncate focus:border-brand-500 focus:outline-none"
+                  title={selectedComparisonRun ? getBenchmarkRunSelectOption(selectedComparisonRun).fullTitle : ''}
                 >
                   {benchmarkRuns.length === 0 ? (
                     <option value="">No benchmark runs available</option>
                   ) : (
-                    benchmarkRuns.map((r) => {
-                      const modelCount = r.model_configs?.length || 0;
-                      const hasScores =
-                        r.results_summary?.model_metrics &&
-                        Object.keys(r.results_summary.model_metrics).length > 0;
-                      return (
-                        <option key={r.id} value={r.id}>
-                          {r.id} — {r.dataset_name} ({r.source_split}, N={r.subset_size || r.progress?.total_items || 'all'}, {modelCount} models) [
-                          {r.status}
-                          {hasScores ? ' • Scored' : ' • Unscored'}]
-                        </option>
-                      );
-                    })
+                    [...benchmarkRuns]
+                      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+                      .map((r) => {
+                        const { label, fullTitle } = getBenchmarkRunSelectOption(r);
+                        return (
+                          <option key={r.id} value={r.id} title={fullTitle}>
+                            {label}
+                          </option>
+                        );
+                      })
                   )}
                 </select>
 
@@ -2189,6 +2328,25 @@ export const BenchmarkLabPage: React.FC = () => {
             </div>
 
             <div className="p-5 overflow-y-auto space-y-4 text-xs flex-1">
+              {/* Benchmark Name */}
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">
+                  Benchmark Name <span className="text-[10px] text-slate-500 font-normal">(Optional)</span>
+                </label>
+                <input
+                  type="text"
+                  maxLength={80}
+                  placeholder="e.g. GSM8K Local Model Comparison"
+                  value={runBenchmarkName}
+                  onChange={(e) => setRunBenchmarkName(e.target.value)}
+                  className="w-full bg-dark-850 border border-dark-750 text-slate-200 text-xs rounded-lg px-3 py-2 focus:border-brand-500 focus:outline-none placeholder:text-slate-500"
+                />
+                <div className="flex justify-between items-center text-[10px] text-slate-500 mt-1">
+                  <span>Leave blank to auto-generate from dataset alias and time</span>
+                  <span>{runBenchmarkName.length}/80</span>
+                </div>
+              </div>
+
               {/* Dataset selection */}
               <div>
                 <label className="text-xs font-medium text-slate-300 block mb-1">
@@ -2832,6 +2990,89 @@ export const BenchmarkLabPage: React.FC = () => {
                 className="dev-btn-secondary text-xs px-4 py-1.5"
               >
                 Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: RENAME BENCHMARK RUN MODAL */}
+      {renameModalRun && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="dev-card w-full max-w-md border border-dark-750 bg-dark-900 shadow-2xl rounded-2xl flex flex-col">
+            <div className="p-4 border-b border-dark-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                  <Edit2 className="w-4 h-4 text-brand-400" />
+                  Rename Benchmark Run
+                </h3>
+                <span className="text-[11px] font-mono text-slate-400">
+                  {renameModalRun.id}
+                </span>
+              </div>
+              <button
+                onClick={() => setRenameModalRun(null)}
+                className="text-slate-400 hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">
+                  Benchmark Name
+                </label>
+                <input
+                  type="text"
+                  maxLength={80}
+                  autoFocus
+                  placeholder="e.g. Qwen vs Llama — Math Pilot"
+                  value={renameInput}
+                  onChange={(e) => setRenameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSaveRename();
+                    }
+                  }}
+                  className="w-full bg-dark-850 border border-dark-750 text-slate-200 text-xs rounded-lg px-3 py-2 focus:border-brand-500 focus:outline-none placeholder:text-slate-500"
+                />
+                <div className="flex justify-between items-center text-[10px] text-slate-500 mt-1">
+                  <span>Up to 80 characters</span>
+                  <span>{renameInput.length}/80</span>
+                </div>
+              </div>
+
+              {renameError && (
+                <div className="p-2.5 rounded bg-red-950/40 border border-red-800/50 text-[11px] text-red-300 flex items-start gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                  <span>{renameError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-3.5 border-t border-dark-800 flex items-center justify-between">
+              <button
+                onClick={() => setRenameModalRun(null)}
+                disabled={renaming}
+                className="dev-btn-secondary text-xs px-3.5 py-1.5"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveRename}
+                disabled={renaming}
+                className="dev-btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5"
+              >
+                {renaming ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Name'
+                )}
               </button>
             </div>
           </div>

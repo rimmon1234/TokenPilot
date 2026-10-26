@@ -422,12 +422,17 @@ export interface BenchmarkRunProgress {
 }
 
 export interface BenchmarkRunCreate {
+  display_name?: string | null;
   dataset_manifest_id: string;
   models: BenchmarkModelConfig[];
   subset_size?: number | null;
   seed?: number;
   generation_settings?: BenchmarkGenerationSettings;
   concurrency?: number;
+}
+
+export interface BenchmarkRunUpdate {
+  display_name: string;
 }
 
 export type EvaluationOutcome =
@@ -489,6 +494,7 @@ export interface BenchmarkRunScoringSummary {
 
 export interface BenchmarkRun {
   id: string;
+  display_name?: string | null;
   dataset_manifest_id: string;
   dataset_name: string;
   dataset_id: string;

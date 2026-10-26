@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from app.schemas.models import ExecutionMode
 from app.schemas.usage import PricingSnapshot
 from app.schemas.dataset import TaskType
@@ -62,12 +62,44 @@ class BenchmarkRunProgress(BaseModel):
 
 class BenchmarkRunCreate(BaseModel):
     """Request payload to initiate a multi-model benchmark run."""
+    display_name: Optional[str] = Field(None, description="Optional custom name for the benchmark run (max 80 chars).")
     dataset_manifest_id: str = Field(..., description="Target dataset manifest identifier.")
     models: List[BenchmarkModelConfig] = Field(..., min_length=1, description="Enabled models to evaluate.")
     subset_size: Optional[int] = Field(None, ge=1, le=1000, description="Subset record limit.")
     seed: int = Field(default=42, description="Fixed random seed for deterministic record sampling.")
     generation_settings: BenchmarkGenerationSettings = Field(default_factory=BenchmarkGenerationSettings)
     concurrency: int = Field(default=1, ge=1, le=4, description="Bounded concurrency (default 1 for safety).")
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def validate_display_name(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            trimmed = v.strip()
+            if not trimmed:
+                raise ValueError("Benchmark name cannot be empty or whitespace-only.")
+            if len(trimmed) > 80:
+                raise ValueError("Benchmark name cannot exceed 80 characters.")
+            return trimmed
+        raise ValueError("Benchmark name must be a string.")
+
+
+class BenchmarkRunUpdate(BaseModel):
+    """Payload to update editable metadata fields of an existing benchmark run."""
+    display_name: str = Field(..., description="Updated custom benchmark name (max 80 chars).")
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def validate_display_name(cls, v):
+        if isinstance(v, str):
+            trimmed = v.strip()
+            if not trimmed:
+                raise ValueError("Benchmark name cannot be empty or whitespace-only.")
+            if len(trimmed) > 80:
+                raise ValueError("Benchmark name cannot exceed 80 characters.")
+            return trimmed
+        raise ValueError("Benchmark name must be a string.")
 
 
 class EvaluationOutcome(str, Enum):
@@ -137,6 +169,7 @@ class BenchmarkRunScoringSummary(BaseModel):
 class BenchmarkRun(BaseModel):
     """Entity representing a benchmark run configuration, lifecycle, and progress."""
     id: str
+    display_name: Optional[str] = Field(None, description="Human-readable custom benchmark name.")
     dataset_manifest_id: str
     dataset_name: str
     dataset_id: str

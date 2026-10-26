@@ -143,10 +143,20 @@ class BenchmarkRunner:
 
         run_id = f"run-{uuid.uuid4().hex[:10]}"
         total_evaluations = len(records) * len(request.models)
+        now = datetime.now(timezone.utc)
+
+        # Generate default concise display name if not provided: <Short Dataset Alias> · <Timestamp>
+        if request.display_name:
+            resolved_display_name = request.display_name
+        else:
+            short_dataset = "GSM8K" if manifest.dataset_id.lower() == "gsm8k" else manifest.dataset_name
+            time_str = now.strftime("%b %d, %I:%M %p")
+            resolved_display_name = f"{short_dataset} · {time_str}"
 
         # Create serialized run record (excluding credentials)
         run = BenchmarkRun(
             id=run_id,
+            display_name=resolved_display_name,
             dataset_manifest_id=manifest.manifest_id,
             dataset_name=manifest.dataset_name,
             dataset_id=manifest.dataset_id,
@@ -160,7 +170,7 @@ class BenchmarkRunner:
             generation_settings=request.generation_settings,
             subset_size=request.subset_size,
             seed=request.seed,
-            started_at=datetime.now(timezone.utc),
+            started_at=now,
             results_summary={},
         )
 

@@ -308,6 +308,7 @@ Structure returned by `GET /api/benchmarks/runs/{run_id}/export?format=json`:
 Represents an empirical evaluation run against an imported dataset manifest across a set of workspace models.
 - **Fields**:
   - `id`: string (e.g., `run-gsm8k-1741520000`)
+  - `display_name`: optional string (custom human-readable name, max 80 chars; fallback `<Short Dataset Alias> · <Timestamp>` if omitted)
   - `dataset_manifest_id`: string (references `DatasetManifest.manifest_id`)
   - `dataset_name`: string
   - `dataset_id`: string
@@ -325,6 +326,10 @@ Represents an empirical evaluation run against an imported dataset manifest acro
   - `completed_at`: optional datetime
   - `error_message`: optional string
   - `results_summary`: dict (populated with `BenchmarkRunScoringSummary` upon scoring)
+
+#### `BenchmarkRunUpdate`
+Payload for `PATCH /api/benchmarks/runs/{run_id}`:
+- `display_name`: string (required, trimmed, 1-80 characters, empty/whitespace-only rejected)
 
 #### `BenchmarkResult`
 Canonical evaluation result record for an individual prompt executed against a specific model.

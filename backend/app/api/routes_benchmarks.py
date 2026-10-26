@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Query, status
 from app.schemas.evaluation import (
     BenchmarkRunCreate,
+    BenchmarkRunUpdate,
     BenchmarkRun,
     BenchmarkResult,
 )
@@ -56,6 +57,28 @@ async def get_benchmark_run(run_id: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Benchmark run '{run_id}' not found.",
         )
+    return run
+
+
+@router.patch("/runs/{run_id}", response_model=BenchmarkRun)
+async def update_benchmark_run(run_id: str, request: BenchmarkRunUpdate):
+    """
+    Update explicitly permitted metadata fields of an existing benchmark run (such as display_name).
+    Does not modify benchmark results, dataset manifests, scoring summaries, or model configs.
+    """
+    run = benchmark_runner.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Benchmark run '{run_id}' not found.",
+        )
+
+    run.display_name = request.display_name
+    benchmark_storage.save_run(run)
+
+    if run_id in benchmark_runner._active_runs:
+        benchmark_runner._active_runs[run_id] = run
+
     return run
 
 
@@ -202,6 +225,7 @@ async def export_benchmark_run(
 
         # 1. Metadata Header
         writer.writerow(["# TokenPilot Benchmark Evaluation Report"])
+        writer.writerow(["# Benchmark Name", run.display_name or run.id])
         writer.writerow(["# Run ID", run.id])
         writer.writerow(["# Dataset", f"{run.dataset_name} ({run.dataset_id})"])
         writer.writerow(["# Revision", run.dataset_revision])
@@ -368,6 +392,7 @@ async def export_benchmark_run(
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "run_metadata": {
             "run_id": run.id,
+            "display_name": run.display_name,
             "dataset_id": run.dataset_id,
             "dataset_name": run.dataset_name,
             "dataset_revision": run.dataset_revision,

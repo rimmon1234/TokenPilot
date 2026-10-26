@@ -2,6 +2,7 @@ import {
   BenchmarkRun,
   BenchmarkResult,
   BenchmarkRunCreate,
+  BenchmarkRunUpdate,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
@@ -147,6 +148,35 @@ export async function downloadBenchmarkReport(
     document.body.removeChild(link);
     window.URL.revokeObjectURL(downloadUrl);
   }
+}
+
+export async function updateBenchmarkRun(
+  runId: string,
+  update: BenchmarkRunUpdate
+): Promise<BenchmarkRun> {
+  const url = `${API_BASE}/benchmarks/runs/${encodeURIComponent(runId)}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(update),
+  });
+
+  if (!res.ok) {
+    let errorDetail = `Failed to update benchmark run (HTTP ${res.status})`;
+    try {
+      const errJson = await res.json();
+      if (errJson && errJson.detail) {
+        errorDetail = errJson.detail;
+      }
+    } catch {
+      // fallback
+    }
+    throw new Error(errorDetail);
+  }
+
+  return await res.json();
 }
 
 export async function deleteBenchmarkRun(runId: string): Promise<void> {

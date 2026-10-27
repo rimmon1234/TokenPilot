@@ -109,11 +109,13 @@ TokenPilot is developed in deliberate, verifiable milestones. Each milestone del
   - `PATCH /api/benchmarks/runs/{run_id}` endpoint and UI action to rename completed or historical runs without re-inference.
   - Compact `<Name> · <Timestamp>` label formatting across selection dropdowns with CSS name truncation, visible timestamps, and accessible tooltips.
   - Full backwards compatibility with legacy runs and inclusion in JSON and RFC 4180 CSV exports.
-- **M5 Development-Data Preparation & Protocol** (Groundwork Complete):
+- **M5 Development-Data Preparation & Protocol** (Completed):
   - Strict split discipline: GSM8K upstream `train` split exclusively for `dev_train`, preserving `test` split as a held-out benchmark.
-  - `M5PilotRecord` canonical schema and `m5_collector` builder.
-  - Group-K prompt partition engine ensuring zero prompt leakage between training and validation folds.
-  - Documented manual execution runbook for sequential evaluation of `llama3.2:3b` and `qwen2.5-coder:7b`.
+  - `M5PilotRecord` canonical schema with secret exclusion across prompts and completions.
+  - Deterministic Group-K prompt partition engine (`partition_m5_records_by_prompt`, seed 42, 80/20 train/validation split) with zero prompt leakage.
+  - End-to-end `prepare_m5_pilot_dataset` pipeline and `POST /api/benchmarks/runs/{run_id}/prepare-m5-pilot` endpoint.
+  - Validated pilot dataset generated from rescored `run-6c11f1c5dd` (50 samples across 25 prompts: 40 train, 10 val, 0 exclusions, 0 secrets, truthful cost representation).
+  - Artifacts (`train.jsonl`, `val.jsonl`, `m5_pilot_all.jsonl`, `m5_pilot_manifest.json`) stored in local `data/m5_pilot/` outside Git tracking.
 
 ### Milestone M5: Supervised ML Router Training
 - Feature engineering on input prompts (syntactic tokens, regex markers, embeddings)

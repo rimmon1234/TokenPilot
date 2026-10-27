@@ -29,6 +29,10 @@ class Settings(BaseModel):
         "BENCHMARK_RUNS_STORAGE_DIR",
         str(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "benchmark_runs")))
     )
+    m5_pilot_storage_dir: str = os.getenv(
+        "M5_PILOT_STORAGE_DIR",
+        str(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "m5_pilot")))
+    )
 
 
 settings = Settings()

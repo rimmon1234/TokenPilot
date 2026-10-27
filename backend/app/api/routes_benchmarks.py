@@ -480,3 +480,39 @@ async def export_benchmark_run(
         },
     )
 
+
+@router.post("/runs/{run_id}/prepare-m5-pilot")
+async def prepare_m5_pilot(
+    run_id: str,
+    train_ratio: float = Query(0.8, ge=0.5, le=0.95),
+    seed: int = Query(42),
+):
+    """
+    Build, validate, partition and export canonical M5 pilot dataset records
+    from a completed benchmark run into local storage.
+    Enforces Group-K partition without prompt leakage, secret exclusion,
+    cost integrity, and split discipline.
+    """
+    from app.services.benchmark.m5_collector import prepare_m5_pilot_dataset
+
+    try:
+        manifest, _, _ = prepare_m5_pilot_dataset(
+            run_id=run_id,
+            train_ratio=train_ratio,
+            seed=seed,
+        )
+        return manifest
+    except ValueError as err:
+        logger.warning("M5 pilot dataset preparation error for run %s: %s", run_id, err)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(err),
+        )
+    except Exception as err:
+        logger.error("Failed to prepare M5 pilot dataset: %s", err, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal error preparing M5 pilot dataset: {str(err)}",
+        )
+
+

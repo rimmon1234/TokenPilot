@@ -272,25 +272,28 @@ curl -X POST http://localhost:8000/api/datasets/import \
    ```
 
 #### Step 5: Convert and Partition for M5 Router Training
-Use the `app.services.benchmark.m5_collector` utility:
+Use the `app.services.benchmark.m5_collector` pipeline:
 ```python
-from app.services.benchmark.m5_collector import (
-    build_m5_pilot_record,
-    partition_m5_records_by_prompt
-)
-from app.services.benchmark.storage import benchmark_storage
+from app.services.benchmark.m5_collector import prepare_m5_pilot_dataset
 
-run = benchmark_storage.get_run(run_id)
-results = benchmark_storage.get_all_results(run_id)
-
-# 1. Transform to validated M5PilotRecords
-pilot_records = [build_m5_pilot_record(r, run) for r in results]
-
-# 2. Partition by prompt ID (80% train / 20% validation) with zero leakage
-train_records, val_records = partition_m5_records_by_prompt(
-    pilot_records, train_ratio=0.8, seed=42
+# End-to-end extraction, Group-K 80/20 partitioning, and file export
+manifest, train_records, val_records = prepare_m5_pilot_dataset(
+    run_id=run_id,
+    train_ratio=0.8,
+    seed=42,
 )
 ```
+
+Alternatively, invoke via API:
+```bash
+curl -X POST "http://localhost:8000/api/benchmarks/runs/{run_id}/prepare-m5-pilot?train_ratio=0.8&seed=42"
+```
+
+The resulting artifacts are saved under `data/m5_pilot/`:
+- `train.jsonl` (40 records for 25-prompt pilot)
+- `val.jsonl` (10 records for 25-prompt pilot)
+- `m5_pilot_all.jsonl` (50 canonical records)
+- `m5_pilot_manifest.json` (metadata manifest with SHA256 hashes and data-quality metrics)
 
 ### Collection Record Integrity Requirements
 

@@ -71,6 +71,8 @@ data/datasets/*
 !data/datasets/.gitkeep
 data/benchmark_runs/*
 !data/benchmark_runs/.gitkeep
+data/m5_pilot/*
+!data/m5_pilot/.gitkeep
 *.joblib
 
 *.onnx

@@ -177,3 +177,148 @@ def test_m5_record_rejects_secret_bearing_prompts():
             evaluation_status="correct",
             request_status="success",
         )
+
+
+def test_m5_record_rejects_secret_bearing_outputs():
+    """Assert that secret-bearing model outputs trigger validation errors."""
+    with pytest.raises(ValueError, match="Secret-bearing text detected"):
+        M5PilotRecord(
+            sample_id="test-sec-2",
+            prompt_id="p-2",
+            record_id="p-2",
+            dataset_id="gsm8k",
+            dataset_revision="rev1",
+            source_split="train",
+            evaluation_role="dev_train",
+            model_id="m1",
+            model_source="ollama_library",
+            execution_provider="ollama",
+            execution_location="local",
+            runtime_model_id="m1",
+            prompt_text="Solve 2 + 2",
+            prompt_char_length=11,
+            prompt_word_count=4,
+            output_text="The answer is 4, also use Authorization: Bearer hf_1234567890123456789012",
+            reference_answer="4",
+            evaluation_status="correct",
+            request_status="success",
+        )
+
+
+def test_m5_record_strictly_rejects_test_split():
+    """Assert that upstream 'test' split is barred from M5 pilot records."""
+    with pytest.raises(ValueError, match="Upstream 'test' split is strictly prohibited"):
+        M5PilotRecord(
+            sample_id="test-split-1",
+            prompt_id="p-3",
+            record_id="p-3",
+            dataset_id="gsm8k",
+            dataset_revision="rev1",
+            source_split="test",
+            evaluation_role="dev_train",
+            model_id="m1",
+            model_source="ollama_library",
+            execution_provider="ollama",
+            execution_location="local",
+            runtime_model_id="m1",
+            prompt_text="Solve 2 + 2",
+            prompt_char_length=11,
+            prompt_word_count=4,
+            reference_answer="4",
+            evaluation_status="correct",
+            request_status="success",
+        )
+
+
+def test_m5_actual_run_6c11f1c5dd_pipeline(tmp_path):
+    """
+    Integration test verifying end-to-end M5 pilot preparation on actual benchmark run run-6c11f1c5dd.
+    Verifies:
+    - 50 source results across 25 prompts.
+    - 0 exclusions, 0 secrets.
+    - Outcome distribution: Llama (17 correct, 8 incorrect, 0 unparseable), Qwen (20 correct, 3 incorrect, 2 unparseable).
+    - Group-K 80/20 partition: 40 train records (20 prompts), 10 val records (5 prompts).
+    - Absolute zero prompt overlap.
+    - Truthful cost accounting: local compute cost unconfigured -> total_cost_usd is strictly None.
+    - Generated file integrity and SHA256 hashes.
+    """
+    from app.services.benchmark.m5_collector import prepare_m5_pilot_dataset
+
+    manifest, train_recs, val_recs = prepare_m5_pilot_dataset(
+        run_id="run-6c11f1c5dd",
+        output_dir=str(tmp_path),
+        train_ratio=0.8,
+        seed=42,
+    )
+
+    # 1. Dataset provenance and split integrity
+    assert manifest.run_id == "run-6c11f1c5dd"
+    assert manifest.upstream_dataset_id == "gsm8k"
+    assert manifest.upstream_dataset_revision == "740312add88f781978c0658806c59bc2815b9866"
+    assert manifest.source_split == "train"
+    assert manifest.evaluation_role == "dev_train"
+    assert manifest.evaluator_version == "gsm8k_exact_match_v2"
+
+    # 2. Record counts & prompt partitioning
+    assert manifest.total_source_results == 50
+    assert manifest.total_unique_prompts == 25
+    assert manifest.eligible_records == 50
+    assert manifest.excluded_records == 0
+    assert manifest.train_partition_size == 40
+    assert manifest.val_partition_size == 10
+    assert manifest.train_prompt_count == 20
+    assert manifest.val_prompt_count == 5
+    assert manifest.zero_prompt_overlap_verified is True
+
+    # Check partition zero leakage directly
+    train_prompts = set(r.prompt_id for r in train_recs)
+    val_prompts = set(r.prompt_id for r in val_recs)
+    assert len(train_prompts.intersection(val_prompts)) == 0
+
+    # 3. Model outcome distribution
+    assert manifest.model_outcomes["custom-1792832499071-l747a"] == {
+        "correct": 17,
+        "incorrect": 8,
+    }
+    assert manifest.model_outcomes["hf-qwen-2.5-coder-7b-instruct"] == {
+        "correct": 20,
+        "incorrect": 3,
+        "unparseable": 2,
+    }
+
+    # 4. Token usage and cost integrity
+    assert manifest.token_usage_stats["custom-1792832499071-l747a"]["missing_tokens_count"] == 0
+    assert manifest.token_usage_stats["hf-qwen-2.5-coder-7b-instruct"]["missing_tokens_count"] == 2
+
+    assert manifest.cost_stats["custom-1792832499071-l747a"]["unknown_cost_count"] == 25
+    assert manifest.cost_stats["custom-1792832499071-l747a"]["total_cost_usd"] is None
+    assert manifest.cost_stats["custom-1792832499071-l747a"]["cost_provenance"] == "free_local_hardware"
+
+    assert manifest.cost_stats["hf-qwen-2.5-coder-7b-instruct"]["unknown_cost_count"] == 25
+    assert manifest.cost_stats["hf-qwen-2.5-coder-7b-instruct"]["total_cost_usd"] is None
+    assert manifest.cost_stats["hf-qwen-2.5-coder-7b-instruct"]["cost_provenance"] == "provider_averages"
+
+    # 5. File outputs & SHA256 verification
+    for filename in ["train.jsonl", "val.jsonl", "m5_pilot_all.jsonl"]:
+        filepath = tmp_path / filename
+        assert filepath.exists()
+        assert filepath.stat().st_size > 0
+        assert filename in manifest.files
+
+
+def test_m5_api_prepare_endpoint():
+    """Test the POST /api/benchmarks/runs/{run_id}/prepare-m5-pilot endpoint."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    response = client.post("/api/benchmarks/runs/run-6c11f1c5dd/prepare-m5-pilot?train_ratio=0.8&seed=42")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["manifest_id"] == "manifest-m5-pilot-run-6c11f1c5dd"
+    assert data["total_source_results"] == 50
+    assert data["eligible_records"] == 50
+    assert data["train_partition_size"] == 40
+    assert data["val_partition_size"] == 10
+    assert data["zero_prompt_overlap_verified"] is True
+
